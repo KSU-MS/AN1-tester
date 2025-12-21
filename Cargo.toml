@@ -1,0 +1,36 @@
+[package]
+edition = "2024"
+name = "an1-tester"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+cortex-m = { version = "0.7", features = ["inline-asm"] }
+cortex-m-rt = "0.7.0"
+
+defmt = "1.0.1"
+defmt-rtt = "1.0.0"
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+
+embassy-executor = { version = "0.9.0", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
+
+embassy-rp = { version = "0.9.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "binary-info"] }
+
+## synchronization for multithreading/bus sharing
+# embassy-sync = { version = "0.7.2", features = ["defmt"] }
+# embassy-embedded-hal = { version = "0.5.0", features = ["defmt"] }
+# static_cell = "2.1"
+
+## logging via USB support (note: embassy-usb-logger requires portable-atomic with critical-section feature enabled)
+embassy-usb-logger = { version = "0.5.1" }
+log = "0.4"
+# embassy-usb = { version = "0.5.1", features = ["defmt"] }
+
+# mcp2518fd = { git = "https://github.com/khari05/mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
+mcp2518fd = { path = "../mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
+
+
+[profile.release]
+# Enable generation of debug symbols even on release builds
+debug = true
