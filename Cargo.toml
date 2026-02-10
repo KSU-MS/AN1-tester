@@ -25,7 +25,7 @@ embassy-rp = { version = "0.9.0", features = ["defmt", "unstable-pac", "time-dri
 ## logging via USB support (note: embassy-usb-logger requires portable-atomic with critical-section feature enabled)
 embassy-usb-logger = { version = "0.5.1" }
 log = "0.4"
-# embassy-usb = { version = "0.5.1", features = ["defmt"] }
+portable-atomic = { version = "1.5", features = ["critical-section"] }
 
 # mcp2518fd = { git = "https://github.com/khari05/mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
 mcp2518fd = { path = "../mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }

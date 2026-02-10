@@ -43,6 +43,7 @@ async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let driver = Driver::new(p.USB, Irqs);
     let _ = _spawner.spawn(logger_task(driver));
+    Timer::after_secs(2).await;
     info!("Hello World!");
 
     let can_miso = p.PIN_0;
@@ -106,7 +107,7 @@ async fn main(_spawner: Spawner) {
 
     let message = TxMessage::new_2_0(
         Id::Standard(StandardId::MAX),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        &[1, 2, 3, 4, 5, 6, 7, 8],
     )
     .expect("Message data is too long for frame kind (FD)")
     .with_bit_rate_switched(true);
