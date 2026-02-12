@@ -29,6 +29,7 @@ portable-atomic = { version = "1.5", features = ["critical-section"] }
 
 # mcp2518fd = { git = "https://github.com/khari05/mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
 mcp2518fd = { path = "../mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
+hx711_spi = "0.7.0"
 
 
 [profile.release]

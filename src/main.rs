@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+// use defmt::info;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::{
@@ -12,6 +13,7 @@ use embassy_rp::{
 use embassy_time::Delay;
 use embassy_time::Timer;
 use embassy_usb_logger;
+use hx711_spi::Hx711;
 use log::info;
 use mcp2518fd::{
     id::{ExtendedId, Id, StandardId},
@@ -46,89 +48,98 @@ async fn main(_spawner: Spawner) {
     Timer::after_secs(2).await;
     info!("Hello World!");
 
-    let can_miso = p.PIN_0;
-    let can_mosi = p.PIN_3;
-    let can_clk = p.PIN_2;
+    // let can_miso = p.PIN_0;
+    // let can_mosi = p.PIN_3;
+    // let can_clk = p.PIN_2;
 
-    let spi = Spi::new(
-        p.SPI0,
-        can_clk,
-        can_mosi,
-        can_miso,
-        p.DMA_CH0,
-        p.DMA_CH1,
-        Config::default(),
-    );
-    let mut can = MCP2518FD::new(spi, Output::new(p.PIN_1, Level::High));
+    // let spi0 = Spi::new(
+    //     p.SPI0,
+    //     can_clk,
+    //     can_mosi,
+    //     can_miso,
+    //     p.DMA_CH0,
+    //     p.DMA_CH1,
+    //     Config::default(),
+    // );
+    // let mut can = MCP2518FD::new(spi0, Output::new(p.PIN_1, Level::High));
 
-    // Make sure the CAN controller gets reset (in case the Pico reboots
-    // without the MCP2518FD losing power)
-    can.reset().await.unwrap();
+    // // Make sure the CAN controller gets reset (in case the Pico reboots
+    // // without the MCP2518FD losing power)
+    // can.reset().await.unwrap();
 
-    // Configure the chip with default settings
-    can.configure(Settings::default(), &mut Delay)
-        .await
-        .expect("Failed to configure MCP2518");
+    // // Configure the chip with default settings
+    // can.configure(Settings::default(), &mut Delay)
+    //     .await
+    //     .expect("Failed to configure MCP2518");
 
-    // Configure FIFO 1 as an RX FIFO to hold up to 16 messages with a max
-    // payload size of 64 bytes
-    can.configure_fifo(
-        FifoNumber::Fifo1,
-        FifoConfiguration {
-            fifo_size: 16,
-            payload_size: PayloadSize::Bytes64,
-            mode: FifoMode::Receive(RxFifoConfiguration::new().with_message_timestamps(true)),
-        },
-    )
-    .await
-    .expect("Failed to configure FIFO 1 as RX");
+    // // Configure FIFO 1 as an RX FIFO to hold up to 16 messages with a max
+    // // payload size of 64 bytes
+    // can.configure_fifo(
+    //     FifoNumber::Fifo1,
+    //     FifoConfiguration {
+    //         fifo_size: 16,
+    //         payload_size: PayloadSize::Bytes64,
+    //         mode: FifoMode::Receive(RxFifoConfiguration::new().with_message_timestamps(true)),
+    //     },
+    // )
+    // .await
+    // .expect("Failed to configure FIFO 1 as RX");
 
-    // Configure Filter 0 to accept all frame types (Standard or Extended),
-    // with any message ID (mask is all 0s)
-    can.configure_filter(
-        FilterNumber::Filter0,
-        Some(FilterConfiguration {
-            buffer_pointer: FifoNumber::Fifo1,
-            mode: FilterMatchMode::Both,
-            filter_bits: Id::Extended(ExtendedId::ZERO),
-            mask_bits: Id::Extended(ExtendedId::ZERO),
-        }),
-    )
-    .await
-    .expect("Failed to configure Filter 0 for FIFO 1");
+    // // Configure Filter 0 to accept all frame types (Standard or Extended),
+    // // with any message ID (mask is all 0s)
+    // can.configure_filter(
+    //     FilterNumber::Filter0,
+    //     Some(FilterConfiguration {
+    //         buffer_pointer: FifoNumber::Fifo1,
+    //         mode: FilterMatchMode::Both,
+    //         filter_bits: Id::Extended(ExtendedId::ZERO),
+    //         mask_bits: Id::Extended(ExtendedId::ZERO),
+    //     }),
+    // )
+    // .await
+    // .expect("Failed to configure Filter 0 for FIFO 1");
 
-    // Set controller to internal loopback mode (all transmitted messages
-    // will be immediately received)
-    can.set_op_mode(OperationMode::InternalLoopback, &mut Delay)
-        .await
-        .expect("Failed to change chip operating mode");
+    // // Set controller to internal loopback mode (all transmitted messages
+    // // will be immediately received)
+    // can.set_op_mode(OperationMode::InternalLoopback, &mut Delay)
+    //     .await
+    //     .expect("Failed to change chip operating mode");
 
-    /* Send and receive messages forever */
+    // /* Send and receive messages forever */
 
-    let message = TxMessage::new_2_0(
-        Id::Standard(StandardId::MAX),
-        &[1, 2, 3, 4, 5, 6, 7, 8],
-    )
-    .expect("Message data is too long for frame kind (FD)")
-    .with_bit_rate_switched(true);
+    // let message = TxMessage::new_2_0(
+    //     Id::Standard(StandardId::MAX),
+    //     &[1, 2, 3, 4, 5, 6, 7, 8],
+    // )
+    // .expect("Message data is too long for frame kind (FD)")
+    // .with_bit_rate_switched(true);
 
+    let spi1 = Spi::new(p.SPI1, p.PIN_26, p.PIN_27, p.PIN_28, p.DMA_CH2, p.DMA_CH3, Config::default());
+    let mut hx711 = Hx711::new(spi1);
+
+    hx711.reset_async().await.unwrap();
+    hx711.set_mode_async(hx711_spi::Mode::ChAGain64).await.unwrap();
     let mut counter = 0;
 
     loop {
         // Send a message with the TXQ
-        can.tx_queue_transmit_message(&message)
-            .await
-            .expect("Failed to TX frame");
+        // can.tx_queue_transmit_message(&message)
+        //     .await
+        //     .expect("Failed to TX frame");
 
-        // Read the message back (we are in loopback mode)
-        match can.rx_fifo_get_next(FifoNumber::Fifo1).await {
-            Ok(Some(frame)) => info!("Received frame {:?}", frame),
-            Ok(None) => info!("No message to read!"),
-            Err(e) => info!("Error reading from FIFO: {:?}", e),
-        }
+        // // Read the message back (we are in loopback mode)
+        // match can.rx_fifo_get_next(FifoNumber::Fifo1).await {
+        //     Ok(Some(frame)) => info!("Received frame {:?}", frame),
+        //     Ok(None) => info!("No message to read!"),
+        //     Err(e) => info!("Error reading from FIFO: {:?}", e),
+        // }
 
-        counter += 1;
-        info!("Tick {}", counter);
-        Timer::after_secs(1).await;
+        let v = (hx711.read_async().await.unwrap() >> 9) + 40;
+        info!("value = {:?}", v);
+
+
+        // counter += 1;
+        // info!("Tick {}", counter);
+        Timer::after_millis(500).await;
     }
 }
