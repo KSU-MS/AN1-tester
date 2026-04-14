@@ -31,6 +31,7 @@ embassy-usb = "0.5.1"
 
 # mcp2518fd = { git = "https://github.com/khari05/mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
 mcp2518fd = { path = "../mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
+mlx9064x = { version = "0.2.1", default-features = false, features = ["libm"] }
 hx711_spi = "0.7.0"
 
 

@@ -3,10 +3,12 @@
 
 // use defmt::info;
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_rp::bind_interrupts;
 use embassy_rp::{
     gpio::{Level, Output},
-    peripherals::USB,
+    i2c::{I2c},
+    peripherals::{USB, I2C0},
     spi::{Config, Spi},
     usb::{Driver, InterruptHandler},
 };
@@ -30,6 +32,9 @@ use mcp2518fd::{
     },
     spi::MCP2518FD,
 };
+use mlx9064x::mlx90640::Mlx90640;
+use mlx9064x::{MelexisCamera, Mlx90640Driver};
+
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -83,7 +88,7 @@ async fn main(_spawner: Spawner) {
     let driver = Driver::new(p.USB, Irqs);
     let _ = _spawner.spawn(logger_task(driver));
     Timer::after_secs(2).await;
-    info!("Hello World!");
+    info!("Hello World!\n");
 
     // let can_miso = p.PIN_0;
     // let can_mosi = p.PIN_3;
@@ -151,15 +156,31 @@ async fn main(_spawner: Spawner) {
     // .expect("Message data is too long for frame kind (FD)")
     // .with_bit_rate_switched(true);
 
-    let spi1 = Spi::new(p.SPI1, p.PIN_26, p.PIN_27, p.PIN_28, p.DMA_CH2, p.DMA_CH3, Config::default());
-    let mut hx711 = Hx711::new(spi1);
+    // let spi1 = Spi::new(p.SPI1, p.PIN_14, p.PIN_27, p.PIN_28, p.DMA_CH2, p.DMA_CH3, Config::default());
+    // let mut hx711 = Hx711::new(spi1);
 
-    hx711.reset_async().await.unwrap();
-    hx711.set_mode_async(hx711_spi::Mode::ChAGain64).await.unwrap();
-    let mut counter = 0;
+    // hx711.reset_async().await.unwrap();
+    // hx711.set_mode_async(hx711_spi::Mode::ChAGain64).await.unwrap();
+    // let mut counter = 0;
+    
 
+    let i2c0 = I2c::new_blocking(p.I2C0, p.PIN_25, p.PIN_24, embassy_rp::i2c::Config::default());
+    let mut cam = Mlx90640Driver::new(i2c0, 0x33).unwrap();
+
+    let mut temperatures = [0f32; Mlx90640::HEIGHT * Mlx90640::WIDTH];
+    
     loop {
-        // Send a message with the TXQ
+        let _ = cam.generate_image_if_ready(&mut temperatures);
+        for i in temperatures {
+            info!("{:.2},", i);
+        }
+        info!("\n");
+        // let v = (hx711.read_async().await.unwrap() >> 9) + 40;
+        // info!("value = {:?}", v);
+
+        // let message = TxMessage::from_frame(ksu_rs_dbc::messages::CornernodeFrShockpot::new(10).unwrap()).unwrap();
+
+        // // Send a message with the TXQ
         // can.tx_queue_transmit_message(&message)
         //     .await
         //     .expect("Failed to TX frame");
@@ -171,12 +192,8 @@ async fn main(_spawner: Spawner) {
         //     Err(e) => info!("Error reading from FIFO: {:?}", e),
         // }
 
-        let v = (hx711.read_async().await.unwrap() >> 9) + 40;
-        info!("value = {:?}", v);
-
-
         // counter += 1;
         // info!("Tick {}", counter);
-        Timer::after_millis(500).await;
+        Timer::after_millis(100).await;
     }
 }
