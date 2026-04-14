@@ -14,6 +14,7 @@ panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 
 embassy-executor = { version = "0.9.0", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-futures = "0.1.2"
 
 embassy-rp = { version = "0.9.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "binary-info"] }
 
@@ -26,6 +27,7 @@ embassy-rp = { version = "0.9.0", features = ["defmt", "unstable-pac", "time-dri
 embassy-usb-logger = { version = "0.5.1" }
 log = "0.4"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
+embassy-usb = "0.5.1"
 
 # mcp2518fd = { git = "https://github.com/khari05/mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }
 mcp2518fd = { path = "../mcp2518fd", version = "0.1.0", features = ["async", "defmt"] }

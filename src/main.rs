@@ -12,6 +12,7 @@ use embassy_rp::{
 };
 use embassy_time::Delay;
 use embassy_time::Timer;
+use embassy_usb::class::cdc_acm::CdcAcmClass;
 use embassy_usb_logger;
 use hx711_spi::Hx711;
 use log::info;
@@ -37,7 +38,43 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::task]
 async fn logger_task(driver: Driver<'static, USB>) {
-    embassy_usb_logger::run!(1024, log::LevelFilter::Info, driver);
+    // Create embassy-usb Config
+    let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
+    config.manufacturer = Some("Embassy");
+    config.product = Some("USB-serial logger");
+    config.serial_number = None;
+    config.max_power = 100;
+    config.max_packet_size_0 = 64;
+
+    // Create embassy-usb DeviceBuilder using the driver and config.
+    // It needs some buffers for building the descriptors.
+    let mut config_descriptor = [0; 256];
+    let mut bos_descriptor = [0; 256];
+    let mut control_buf = [0; 64];
+
+    let mut logger_state = embassy_usb::class::cdc_acm::State::new();
+
+    let mut builder = embassy_usb::Builder::new(
+        driver,
+        config,
+        &mut config_descriptor,
+        &mut bos_descriptor,
+        &mut [], // no msos descriptors
+        &mut control_buf,
+    );
+    
+    // Create a class for the logger
+    let logger_class = CdcAcmClass::new(&mut builder, &mut logger_state, 64);
+
+    let log_fut = embassy_usb_logger::with_custom_style!(8192, log::LevelFilter::Info, logger_class, |record, writer| {
+        use core::fmt::Write;
+        // let level = record.level().as_str();
+        write!(writer, "{}", record.args()).unwrap();
+    });
+    let mut usb = builder.build();
+    let usb_fut = usb.run();
+
+    join(usb_fut, log_fut).await; 
 }
 
 #[embassy_executor::main]
