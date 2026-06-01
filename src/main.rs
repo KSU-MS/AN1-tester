@@ -4,18 +4,20 @@
 // use defmt::info;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
+use embassy_rp::gpio::{Input, Pin, Pull};
 use embassy_rp::{
     gpio::{Level, Output},
-    i2c::{I2c},
-    peripherals::{USB, I2C0},
+    peripherals::USB,
     spi::{Config, Spi},
     usb::{Driver, InterruptHandler},
 };
 use embassy_time::Delay;
 use embassy_time::Timer;
 use embassy_usb_logger;
-use hx711_spi::Hx711;
 use log::info;
+use mcp2518fd::settings::{
+    BitTimeConfiguration, DataBitTimeConfiguration, NominalBitTimeConfiguration,
+};
 use mcp2518fd::{
     id::{ExtendedId, Id, StandardId},
     memory::controller::{
@@ -30,8 +32,6 @@ use mcp2518fd::{
     },
     spi::MCP2518FD,
 };
-use mlx9064x::mlx90640::Mlx90640;
-use mlx9064x::{MelexisCamera, Mlx90640Driver};
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -51,6 +51,8 @@ async fn main(_spawner: Spawner) {
     let _ = _spawner.spawn(logger_task(driver));
     Timer::after_secs(2).await;
     info!("Hello World!");
+
+    let btn_5 = Input::new(p.PIN_25, Pull::Up);
 
     let can_miso = p.PIN_0;
     let can_mosi = p.PIN_3;
@@ -75,6 +77,13 @@ async fn main(_spawner: Spawner) {
     can.configure(Settings::default(), &mut Delay)
         .await
         .expect("Failed to configure MCP2518");
+
+    can.configure_bit_timing(BitTimeConfiguration {
+        nominal: NominalBitTimeConfiguration::RATE_500_KBIT,
+        data: DataBitTimeConfiguration::RATE_500_KBIT,
+    })
+    .await
+    .expect("Failed to set CAN baudrate");
 
     // Configure FIFO 1 as an RX FIFO to hold up to 16 messages with a max
     // payload size of 64 bytes
@@ -108,49 +117,25 @@ async fn main(_spawner: Spawner) {
         .await
         .expect("Failed to change chip operating mode");
 
-    /* Send and receive messages forever */
-
-    // let message = TxMessage::new_2_0(
-    //     Id::Standard(StandardId::MAX),
-    //     &[1, 2, 3, 4, 5, 6, 7, 8],
-    // )
-    // .expect("Message data is too long for frame kind (FD)")
-    // .with_bit_rate_switched(true);
-
-    // let spi1 = Spi::new(p.SPI1, p.PIN_14, p.PIN_27, p.PIN_28, p.DMA_CH2, p.DMA_CH3, Config::default());
-    // let mut hx711 = Hx711::new(spi1);
-
-    // hx711.reset_async().await.unwrap();
-    // hx711.set_mode_async(hx711_spi::Mode::ChAGain64).await.unwrap();
-    
-    // let i2c0 = I2c::new_blocking(p.I2C0, p.PIN_25, p.PIN_24, embassy_rp::i2c::Config::default());
-    // let mut cam = Mlx90640Driver::new(i2c0, 0x33).unwrap();
-    
-    // let mut temperatures = [0f32; Mlx90640::HEIGHT * Mlx90640::WIDTH];
-    // let mut counter = 0;
-    
     loop {
-        // let _ = cam.generate_image_if_ready(&mut temperatures);
-        
-        // let v = (hx711.read_async().await.unwrap() >> 9) + 40;
-        // info!("value = {:?}", v);
-
-        let message = TxMessage::from_frame(ksu_rs_dbc::messages::CornernodeFrShockpot::new(10).unwrap()).unwrap();
+        let message = TxMessage::from_frame(
+            ksu_rs_dbc::messages::DashButtons::new(
+                false,
+                btn_5.is_low(),
+                false,
+                false,
+                false,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
         // Send a message with the TXQ
         can.tx_queue_transmit_message(&message)
             .await
             .expect("Failed to TX frame");
 
-        // Read the message back (we are in loopback mode)
-        // match can.rx_fifo_get_next(FifoNumber::Fifo1).await {
-        //     Ok(Some(frame)) => info!("Received frame {:?}", frame),
-        //     Ok(None) => info!("No message to read!"),
-        //     Err(e) => info!("Error reading from FIFO: {:?}", e),
-        // }
-
-        // counter += 1;
-        // info!("Tick {}", counter);
-        Timer::after_millis(10000).await;
+        Timer::after_millis(1000).await;
     }
 }
