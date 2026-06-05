@@ -3,13 +3,14 @@
 
 // use defmt::info;
 use embassy_executor::Spawner;
-use embassy_rp::bind_interrupts;
+use embassy_rp::adc::{Adc, Channel};
 use embassy_rp::gpio::{Input, Pin, Pull};
+use embassy_rp::{adc, bind_interrupts};
 use embassy_rp::{
     gpio::{Level, Output},
     peripherals::USB,
     spi::{Config, Spi},
-    usb::{Driver, InterruptHandler},
+    usb::{self, Driver},
 };
 use embassy_time::Delay;
 use embassy_time::Timer;
@@ -36,7 +37,11 @@ use mcp2518fd::{
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
-    USBCTRL_IRQ => InterruptHandler<USB>;
+    USBCTRL_IRQ => usb::InterruptHandler<USB>;
+});
+
+bind_interrupts!(struct AdcIrqs {
+        ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 #[embassy_executor::task]
@@ -47,12 +52,14 @@ async fn logger_task(driver: Driver<'static, USB>) {
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
+    let mut adc = Adc::new(p.ADC, AdcIrqs, adc::Config::default());
+
     let driver = Driver::new(p.USB, Irqs);
     let _ = _spawner.spawn(logger_task(driver));
-    Timer::after_secs(2).await;
-    info!("Hello World!");
 
     let btn_5 = Input::new(p.PIN_25, Pull::Up);
+    let mut steering_pot = Channel::new_pin(p.PIN_29, Pull::None);
+    let mut bpr = Channel::new_pin(p.PIN_27, Pull::None);
 
     let can_miso = p.PIN_0;
     let can_mosi = p.PIN_3;
@@ -118,6 +125,8 @@ async fn main(_spawner: Spawner) {
         .expect("Failed to change chip operating mode");
 
     loop {
+        //
+        //// Dash button
         let message = TxMessage::from_frame(
             ksu_rs_dbc::messages::DashButtons::new(
                 false,
@@ -131,11 +140,36 @@ async fn main(_spawner: Spawner) {
         )
         .unwrap();
 
-        // Send a message with the TXQ
         can.tx_queue_transmit_message(&message)
             .await
             .expect("Failed to TX frame");
 
-        Timer::after_millis(1000).await;
+        //
+        //// Rear brake pressure
+        let brake_pressure_uint = adc.read(&mut bpr).await.unwrap();
+
+        let message = TxMessage::from_frame(
+            ksu_rs_dbc::messages::CornernodeRearBrakepressure::new(brake_pressure_uint).unwrap(),
+        )
+        .unwrap();
+
+        can.tx_queue_transmit_message(&message)
+            .await
+            .expect("Failed to TX frame");
+
+        //
+        //// Steering pot
+        let steering_pot_uint = adc.read(&mut steering_pot).await.unwrap();
+
+        let message = TxMessage::from_frame(
+            ksu_rs_dbc::messages::CornernodeSteeringpot::new(steering_pot_uint).unwrap(),
+        )
+        .unwrap();
+
+        can.tx_queue_transmit_message(&message)
+            .await
+            .expect("Failed to TX frame");
+
+        Timer::after_millis(20).await; // 50hz
     }
 }
