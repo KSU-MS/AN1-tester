@@ -95,7 +95,6 @@ impl VectorNav {
 
     pub fn check_bin(&self, buffer: [u8; 2]) -> Result<VectorNavBin, VectorNavError> {
         if buffer[0] == 0x42 && buffer[1] == 0x10 {
-            info!("Got 20hz bin");
             Ok(VectorNavBin::Bin20hz)
         } else if buffer[0] == 0xA8 && buffer[1] == 0x01 {
             Ok(VectorNavBin::Bin400hz)
@@ -104,8 +103,30 @@ impl VectorNav {
         }
     }
 
-    pub fn load_values(&self, crc: u16) -> Result<VectorNavBin, VectorNavError> {
-        return Err(VectorNavError::BadCRC);
+    pub fn check_values(
+        &self,
+        bin: VectorNavBin,
+        crc: u16,
+    ) -> Result<VectorNavBin, VectorNavError> {
+        match bin {
+            VectorNavBin::Bin20hz => unsafe {
+                if self.bin1_data.data.checksum == crc {
+                    info!("Got good 20hz bin!");
+                    return Ok(VectorNavBin::Bin20hz);
+                } else {
+                    return Err(VectorNavError::BadCRC);
+                }
+            },
+
+            VectorNavBin::Bin400hz => unsafe {
+                if self.bin2_data.data.checksum == crc {
+                    info!("Got good 400hz bin!");
+                    return Ok(VectorNavBin::Bin400hz);
+                } else {
+                    return Err(VectorNavError::BadCRC);
+                }
+            },
+        }
     }
 
     pub fn calc_crc(&self, bin: VectorNavBin) -> u16 {
@@ -114,9 +135,10 @@ impl VectorNav {
         match bin {
             VectorNavBin::Bin20hz => {
                 unsafe {
-                    for &b in self.bin1_data.buffer.iter() {
+                    // We need all the bytes except the last 2 which is the VNs CRC
+                    for b in 0..(self.bin1_data.buffer.len() - 2) {
                         crc = (crc >> 8) | (crc << 8); // Rotate crc left 8 bits
-                        crc ^= b as u16; // XOR crc with data[i]
+                        crc ^= self.bin1_data.buffer[b] as u16; // XOR crc with data[i]
                         crc ^= (crc & 0x00FF) >> 4; // XOR crc with lower 4 bits of crc
                         crc ^= crc << 12; // Rotate crc left 12 bits
                         crc ^= (crc & 0x00FF) << 5; // XOR crc w lower 8 bits & shift left 5 bits
@@ -125,9 +147,10 @@ impl VectorNav {
             }
             VectorNavBin::Bin400hz => {
                 unsafe {
-                    for &b in self.bin2_data.buffer.iter() {
+                    // We need all the bytes except the last 2 which is the VNs CRC
+                    for b in 0..(self.bin2_data.buffer.len() - 2) {
                         crc = (crc >> 8) | (crc << 8); // Rotate crc left 8 bits
-                        crc ^= b as u16; // XOR crc with data[i]
+                        crc ^= self.bin2_data.buffer[b] as u16; // XOR crc with data[i]
                         crc ^= (crc & 0x00FF) >> 4; // XOR crc with lower 4 bits of crc
                         crc ^= crc << 12; // Rotate crc left 12 bits
                         crc ^= (crc & 0x00FF) << 5; // XOR crc w lower 8 bits & shift left 5 bits

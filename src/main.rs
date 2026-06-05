@@ -100,7 +100,7 @@ async fn main(_spawner: Spawner) {
     loop {
         //
         //// VN Stage
-        info!("morw");
+        // info!("morw");
 
         //
         //// CAN Stage
@@ -134,56 +134,58 @@ async fn uart_task(mut uart_controller: Uart<'static, Async>) {
     let mut bin_buffer = [0u8; 2];
 
     loop {
-        if uart_controller.read(&mut input_buf).await.is_err() {
-            continue;
-        };
+        info!("Byte: {:?}", uart_controller.read(&mut input_buf).await);
+        // if uart_controller.read(&mut input_buf).await.is_err() {
+        //     continue;
+        // };
 
-        if !vn.check_sync_byte(input_buf) {
-            continue;
-        }
-
-        if uart_controller.read(&mut bin_buffer).await.is_err() {
-            continue;
-        };
-
-        match vn.check_bin(bin_buffer) {
-            Ok(vn_rs::VectorNavBin::Bin20hz) => {
-                unsafe {
-                    if uart_controller
-                        .read(&mut vn.bin1_data.buffer)
-                        .await
-                        .is_err()
-                    {
-                        continue;
-                    };
-                }
-
-                let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin20hz);
-
-                if vn.load_values(crc).is_err() {
-                    continue;
-                };
-            }
-            Ok(vn_rs::VectorNavBin::Bin400hz) => {
-                unsafe {
-                    if uart_controller
-                        .read(&mut vn.bin2_data.buffer)
-                        .await
-                        .is_err()
-                    {
-                        continue;
-                    };
-                }
-
-                let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin400hz);
-
-                if vn.load_values(crc).is_err() {
-                    continue;
-                };
-            }
-            Err(_) => {
-                continue;
-            }
-        };
+        // if !vn.check_sync_byte(input_buf) {
+        //     continue;
+        // }
+        //
+        // if uart_controller.read(&mut bin_buffer).await.is_err() {
+        //     continue;
+        // };
+        //
+        // info!("At bin check");
+        // match vn.check_bin(bin_buffer) {
+        //     Ok(vn_rs::VectorNavBin::Bin20hz) => {
+        //         unsafe {
+        //             if uart_controller
+        //                 .read(&mut vn.bin1_data.buffer)
+        //                 .await
+        //                 .is_err()
+        //             {
+        //                 continue;
+        //             };
+        //         }
+        //
+        //         let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin20hz);
+        //
+        //         if vn.check_values(vn_rs::VectorNavBin::Bin20hz, crc).is_err() {
+        //             continue;
+        //         };
+        //     }
+        //     Ok(vn_rs::VectorNavBin::Bin400hz) => {
+        //         unsafe {
+        //             if uart_controller
+        //                 .read(&mut vn.bin2_data.buffer)
+        //                 .await
+        //                 .is_err()
+        //             {
+        //                 continue;
+        //             };
+        //         }
+        //
+        //         let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin400hz);
+        //
+        //         if vn.check_values(vn_rs::VectorNavBin::Bin400hz, crc).is_err() {
+        //             continue;
+        //         };
+        //     }
+        //     Err(_) => {
+        //         continue;
+        //     }
+        // };
     }
 }
