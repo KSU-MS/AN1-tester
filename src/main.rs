@@ -62,9 +62,6 @@ async fn main(_spawner: Spawner) {
     let driver = Driver::new(pins.USB, UsbIrqs);
     let _ = _spawner.spawn(logger_task(driver)).unwrap();
 
-    Timer::after_secs(2).await;
-    info!("Hello World!");
-
     // Setup a SPI for the CAN Controller
     // let spi0 = Spi::new(
     //     pins.SPI0,
@@ -131,18 +128,62 @@ async fn main(_spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn uart_task(mut uart_controller: Uart<'static, Async>) {
-    let vn = VectorNav::new();
+    let mut vn = VectorNav::new();
 
     let mut input_buf = [0u8; 1];
-    let mut vn_buffer = [0u8; 90];
+    let mut bin_buffer = [0u8; 2];
 
     loop {
-        let read_res = uart_controller.read(&mut input_buf).await;
+        if uart_controller.read(&mut input_buf).await.is_err() {
+            continue;
+        };
 
-        if vn.check_sync_byte(input_buf) && read_res == Ok(()) {
-            uart_controller.read(&mut input_buf).await.unwrap();
-            info!("{:?}", input_buf);
-            // let is_bin_1 = vn.update();
+        if !vn.check_sync_byte(input_buf) {
+            continue;
         }
+
+        if uart_controller.read(&mut bin_buffer).await.is_err() {
+            continue;
+        };
+
+        match vn.check_bin(bin_buffer) {
+            Ok(vn_rs::VectorNavBin::Bin20hz) => {
+                unsafe {
+                    if uart_controller
+                        .read(&mut vn.bin1_data.buffer)
+                        .await
+                        .is_err()
+                    {
+                        continue;
+                    };
+                }
+
+                let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin20hz);
+
+                if vn.load_values(crc).is_err() {
+                    continue;
+                };
+            }
+            Ok(vn_rs::VectorNavBin::Bin400hz) => {
+                unsafe {
+                    if uart_controller
+                        .read(&mut vn.bin2_data.buffer)
+                        .await
+                        .is_err()
+                    {
+                        continue;
+                    };
+                }
+
+                let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin400hz);
+
+                if vn.load_values(crc).is_err() {
+                    continue;
+                };
+            }
+            Err(_) => {
+                continue;
+            }
+        };
     }
 }
