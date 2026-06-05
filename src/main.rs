@@ -134,7 +134,13 @@ async fn uart_task(mut uart_controller: Uart<'static, Async>) {
     let mut bin_buffer = [0u8; 2];
 
     loop {
-        info!("Byte: {:?}", uart_controller.read(&mut input_buf).await);
+        let read_res = uart_controller.read(&mut input_buf).await;
+
+        if vn.check_sync_byte(input_buf) && read_res == Ok(()) {
+            uart_controller.read(&mut bin_buffer).await.unwrap();
+            info!("{:?}", bin_buffer);
+        }
+
         // if uart_controller.read(&mut input_buf).await.is_err() {
         //     continue;
         // };
