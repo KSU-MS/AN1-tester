@@ -6,22 +6,17 @@ mod tasks;
 
 // use defmt::info;
 use embassy_executor::Spawner;
-use embassy_rp::adc::{self, Adc, Channel};
-use embassy_rp::bind_interrupts;
-use embassy_rp::gpio::{Input, Pin, Pull};
 use embassy_rp::{
+    bind_interrupts,
     gpio::{Level, Output},
-    peripherals::USB,
-    spi::{Config, Spi},
-    usb::{Driver, InterruptHandler},
+    peripherals::{self, USB},
+    spi::{self, Spi},
+    uart::{self, Async, Uart},
+    usb::{self, Driver},
 };
-use embassy_time::Delay;
-use embassy_time::Timer;
+use embassy_time::{Delay, Timer};
 use embassy_usb_logger;
 use log::info;
-use mcp2518fd::settings::{
-    BitTimeConfiguration, DataBitTimeConfiguration, NominalBitTimeConfiguration,
-};
 use mcp2518fd::{
     id::{ExtendedId, Id},
     memory::controller::{
@@ -31,17 +26,26 @@ use mcp2518fd::{
     },
     message::tx::TxMessage,
     settings::{
-        FifoConfiguration, FifoMode, FilterConfiguration, FilterMatchMode, RxFifoConfiguration,
+        BitTimeConfiguration, DataBitTimeConfiguration, FifoConfiguration, FifoMode,
+        FilterConfiguration, FilterMatchMode, NominalBitTimeConfiguration, RxFifoConfiguration,
         Settings,
     },
     spi::MCP2518FD,
 };
 
+use crate::vn_rs::VectorNav;
+// use crate::{can_helpers::set_joe_can, vn_rs::VectorNav};
+
 use {defmt_rtt as _, panic_probe as _};
 
-bind_interrupts!(struct Irqs {
+mod can_helpers;
+mod vn_rs;
+
+bind_interrupts!(struct UsbIrqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
-    ADC_IRQ_FIFO => adc::InterruptHandler;
+});
+bind_interrupts!(struct UartIrqs {
+    UART1_IRQ => uart::InterruptHandler<peripherals::UART1>;
 });
 
 #[embassy_executor::task]
@@ -51,100 +55,94 @@ async fn logger_task(driver: Driver<'static, USB>) {
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let p = embassy_rp::init(Default::default());
-    let driver = Driver::new(p.USB, Irqs);
-    let _ = _spawner.spawn(logger_task(driver));
+    // Get our peripherals ready
+    let pins = embassy_rp::init(Default::default());
+
+    // Start serial print type shi
+    let driver = Driver::new(pins.USB, UsbIrqs);
+    let _ = _spawner.spawn(logger_task(driver)).unwrap();
+
     Timer::after_secs(2).await;
     info!("Hello World!");
 
-    let btn_5 = Input::new(p.PIN_25, Pull::Up);
+    // Setup a SPI for the CAN Controller
+    // let spi0 = Spi::new(
+    //     pins.SPI0,
+    //     pins.PIN_2,
+    //     pins.PIN_3,
+    //     pins.PIN_0,
+    //     pins.DMA_CH0,
+    //     pins.DMA_CH1,
+    //     spi::Config::default(),
+    // );
+    // let mut can = MCP2518FD::new(spi0, Output::new(pins.PIN_1, Level::High));
+    //
+    // set_joe_can(can);
 
-    let can_miso = p.PIN_0;
-    let can_mosi = p.PIN_3;
-    let can_clk = p.PIN_2;
+    // Setup a UART for the VN
+    let mut uart_config_tech = uart::Config::default();
+    uart_config_tech.baudrate = 230_400;
 
-    let spi0 = Spi::new(
-        p.SPI0,
-        can_clk,
-        can_mosi,
-        can_miso,
-        p.DMA_CH0,
-        p.DMA_CH1,
-        Config::default(),
+    let mut uart_controller = Uart::new(
+        pins.UART1,
+        pins.PIN_24,  // Board TX, VN RX
+        pins.PIN_25,  // Board RX, VN TX
+        UartIrqs,     // Given by the bind_interrupts! macro above
+        pins.DMA_CH0, // Unused DMA channels?
+        pins.DMA_CH1,
+        uart_config_tech, // Adjusted baudrate
     );
-    let mut can = MCP2518FD::new(spi0, Output::new(p.PIN_1, Level::High));
 
-    // Make sure the CAN controller gets reset (in case the Pico reboots
-    // without the MCP2518FD losing power)
-    can.reset().await.unwrap();
+    // info!("uart_controller return: {:?}", uart_controller.);
 
-    // Configure the chip with default settings
-    can.configure(Settings::default(), &mut Delay)
-        .await
-        .expect("Failed to configure MCP2518");
-
-    can.configure_bit_timing(BitTimeConfiguration {
-        nominal: NominalBitTimeConfiguration::RATE_500_KBIT,
-        data: DataBitTimeConfiguration::RATE_500_KBIT,
-    })
-    .await
-    .expect("Failed to set CAN baudrate");
-
-    // Configure FIFO 1 as an RX FIFO to hold up to 16 messages with a max
-    // payload size of 64 bytes
-    can.configure_fifo(
-        FifoNumber::Fifo1,
-        FifoConfiguration {
-            fifo_size: 16,
-            payload_size: PayloadSize::Bytes64,
-            mode: FifoMode::Receive(RxFifoConfiguration::new().with_message_timestamps(true)),
-        },
-    )
-    .await
-    .expect("Failed to configure FIFO 1 as RX");
-
-    // Configure Filter 0 to accept all frame types (Standard or Extended),
-    // with any message ID (mask is all 0s)
-    can.configure_filter(
-        FilterNumber::Filter0,
-        Some(FilterConfiguration {
-            buffer_pointer: FifoNumber::Fifo1,
-            mode: FilterMatchMode::Both,
-            filter_bits: Id::Extended(ExtendedId::ZERO),
-            mask_bits: Id::Extended(ExtendedId::ZERO),
-        }),
-    )
-    .await
-    .expect("Failed to configure Filter 0 for FIFO 1");
-
-    // Set controller to CAN2
-    can.set_op_mode(OperationMode::NormalCan2, &mut Delay)
-        .await
-        .expect("Failed to change chip operating mode");
+    info!(
+        "Spawner return: {:?}",
+        _spawner.spawn(uart_task(uart_controller)).unwrap()
+    );
 
     loop {
-        let message = TxMessage::from_frame(
-            ksu_rs_dbc::messages::DashButtons::new(
-                false,
-                btn_5.is_low(),
-                false,
-                false,
-                false,
-                false,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        //
+        //// VN Stage
+        info!("morw");
 
-        // if temp.signaled() {
-        //     let _ = can.tx_queue_transmit_message(&TxMessage::from_frame(messages::TiretempFrame::new(temp.try_take().unwrap()).unwrap()).unwrap()).await;
-        // }
-
-        if SPEED.signaled() {
-            let _ = can.tx_queue_transmit_message(&TxMessage::from_frame(messages::WheelspeedFrame::new(SPEED.try_take().unwrap()).unwrap()).unwrap()).await;
-        }
-        // Send a message with the TXQ
+        //
+        //// CAN Stage
+        // let message = TxMessage::from_frame(
+        //     ksu_rs_dbc::messages::DashButtons::new(
+        //         false,
+        //         btn_5.is_low(),
+        //         false,
+        //         false,
+        //         false,
+        //         false,
+        //     )
+        //     .unwrap(),
+        // )
+        // .unwrap();
+        //
+        // // Send a message with the TXQ
+        // can.tx_queue_transmit_message(&message)
+        //     .await
+        //     .expect("Failed to TX frame");
 
         Timer::after_millis(1000).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn uart_task(mut uart_controller: Uart<'static, Async>) {
+    let vn = VectorNav::new();
+
+    let mut input_buf = [0u8; 1];
+    let mut vn_buffer = [0u8; 90];
+
+    loop {
+        let read_res = uart_controller.read(&mut input_buf).await;
+
+        if vn.check_sync_byte(input_buf) && read_res == Ok(()) {
+            uart_controller.read(&mut input_buf).await.unwrap();
+            info!("{:?}", input_buf);
+            // let is_bin_1 = vn.update();
+        }
     }
 }
