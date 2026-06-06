@@ -62,6 +62,9 @@ async fn main(_spawner: Spawner) {
     let driver = Driver::new(pins.USB, UsbIrqs);
     let _ = _spawner.spawn(logger_task(driver)).unwrap();
 
+    Timer::after_secs(2).await;
+    info!("Hello World!");
+
     // Setup a SPI for the CAN Controller
     // let spi0 = Spi::new(
     //     pins.SPI0,
@@ -85,8 +88,8 @@ async fn main(_spawner: Spawner) {
         pins.PIN_24,  // Board TX, VN RX
         pins.PIN_25,  // Board RX, VN TX
         UartIrqs,     // Given by the bind_interrupts! macro above
-        pins.DMA_CH0, // Unused DMA channels?
-        pins.DMA_CH1,
+        pins.DMA_CH2, // Unused DMA channels?
+        pins.DMA_CH3,
         uart_config_tech, // Adjusted baudrate
     );
 
@@ -94,104 +97,60 @@ async fn main(_spawner: Spawner) {
 
     info!(
         "Spawner return: {:?}",
-        _spawner.spawn(uart_task(uart_controller)).unwrap()
+        _spawner.spawn(uart_task(uart_controller))
     );
 
-    loop {
-        //
-        //// VN Stage
-        // info!("morw");
-
-        //
-        //// CAN Stage
-        // let message = TxMessage::from_frame(
-        //     ksu_rs_dbc::messages::DashButtons::new(
-        //         false,
-        //         btn_5.is_low(),
-        //         false,
-        //         false,
-        //         false,
-        //         false,
-        //     )
-        //     .unwrap(),
-        // )
-        // .unwrap();
-        //
-        // // Send a message with the TXQ
-        // can.tx_queue_transmit_message(&message)
-        //     .await
-        //     .expect("Failed to TX frame");
-
-        Timer::after_millis(1000).await;
-    }
+    loop {}
 }
 
 #[embassy_executor::task]
 async fn uart_task(mut uart_controller: Uart<'static, Async>) {
-    let mut vn = VectorNav::new();
+    let vn = VectorNav::new();
 
-    let mut input_buf = [0u8; 1];
-    let mut bin_buffer = [0u8; 2];
+    let mut rx_buf = [0u8; 64];
 
     loop {
-        let read_res = uart_controller.read(&mut input_buf).await;
+        let read_res = uart_controller.read(&mut rx_buf).await;
 
-        if vn.check_sync_byte(input_buf) && read_res == Ok(()) {
-            uart_controller.read(&mut bin_buffer).await.unwrap();
-            info!("{:?}", bin_buffer);
+        if vn.check_sync_byte(&rx_buf) && read_res == Ok(()) {
+            info!("{:?}: {:?}", rx_buf, read_res);
         }
 
-        // if uart_controller.read(&mut input_buf).await.is_err() {
-        //     continue;
-        // };
+        info!("At bin check");
+        match vn.check_bin(bin_buffer) {
+            Ok(vn_rs::VectorNavBin::Bin20hz) => {
+                unsafe {
+                    if uart_controller
+                        .read(&mut vn.bin1_data.buffer)
+                        .await
+                        .is_err()
+                    {
+                        continue;
+                    };
+                }
 
-        // if !vn.check_sync_byte(input_buf) {
-        //     continue;
-        // }
-        //
-        // if uart_controller.read(&mut bin_buffer).await.is_err() {
-        //     continue;
-        // };
-        //
-        // info!("At bin check");
-        // match vn.check_bin(bin_buffer) {
-        //     Ok(vn_rs::VectorNavBin::Bin20hz) => {
-        //         unsafe {
-        //             if uart_controller
-        //                 .read(&mut vn.bin1_data.buffer)
-        //                 .await
-        //                 .is_err()
-        //             {
-        //                 continue;
-        //             };
-        //         }
-        //
-        //         let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin20hz);
-        //
-        //         if vn.check_values(vn_rs::VectorNavBin::Bin20hz, crc).is_err() {
-        //             continue;
-        //         };
-        //     }
-        //     Ok(vn_rs::VectorNavBin::Bin400hz) => {
-        //         unsafe {
-        //             if uart_controller
-        //                 .read(&mut vn.bin2_data.buffer)
-        //                 .await
-        //                 .is_err()
-        //             {
-        //                 continue;
-        //             };
-        //         }
-        //
-        //         let crc = vn.calc_crc(vn_rs::VectorNavBin::Bin400hz);
-        //
-        //         if vn.check_values(vn_rs::VectorNavBin::Bin400hz, crc).is_err() {
-        //             continue;
-        //         };
-        //     }
-        //     Err(_) => {
-        //         continue;
-        //     }
-        // };
+                if vn.check_values(vn_rs::VectorNavBin::Bin20hz).is_err() {
+                    continue;
+                };
+            }
+            Ok(vn_rs::VectorNavBin::Bin400hz) => {
+                unsafe {
+                    if uart_controller
+                        .read(&mut vn.bin2_data.buffer)
+                        .await
+                        .is_err()
+                    {
+                        continue;
+                    };
+                }
+
+                if vn.check_values(vn_rs::VectorNavBin::Bin400hz).is_err() {
+                    continue;
+                };
+            }
+            Err(_) => {
+                continue;
+            }
+        };
     }
 }

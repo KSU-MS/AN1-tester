@@ -57,11 +57,27 @@ pub union Bin400hzUnion {
     pub data: Bin400hzType,
 }
 
+const MAX_PACKET_SIZE: usize = size_of::<Bin400hzUnion>();
+enum ParseState {
+    WaitingForSync,
+    ReadingBin {
+        buffer: [u8; 2],
+        received: usize,
+    },
+    ReadingPacket {
+        bin: VectorNavBin,
+        len: usize,
+        received: usize,
+        buffer: [u8; MAX_PACKET_SIZE],
+    },
+}
+
 pub struct VectorNav {
     // uart_controller: Uart<'d, Async>,
     // can_controller: MCP2518FD<SPI, CS>,
     pub bin1_data: Bin20hzUnion,
     pub bin2_data: Bin400hzUnion,
+    state: ParseState,
 }
 
 // impl<SPI, CS> VectorNav {
@@ -82,18 +98,77 @@ impl VectorNav {
             bin2_data: Bin400hzUnion {
                 data: Bin400hzType::default(),
             },
+            state: ParseState::WaitingForSync,
         };
     }
 
-    pub fn check_sync_byte(&self, buffer: [u8; 1]) -> bool {
-        if buffer[0] == 0xFA {
-            return true;
-        } else {
-            return false;
+    pub fn update(&mut self, buffer: &[u8]) -> Result<VectorNavBin, VectorNavError> {
+        for &byte in buffer.iter() {
+            match &mut self.state {
+                // Check if we have a sync byte
+                ParseState::WaitingForSync => {
+                    if byte == 0xFA {
+                        self.state = ParseState::ReadingBin {
+                            buffer: [0; 2],
+                            received: 0,
+                        }
+                    }
+                }
+
+                // Figure out which bin it is
+                ParseState::ReadingBin { buffer, received } => {
+                    buffer[*received] = byte;
+                    *received += 1;
+
+                    if *received == 2 {
+                        match *buffer {
+                            [0x42, 0x10] => {
+                                self.state = ParseState::ReadingPacket {
+                                    bin: VectorNavBin::Bin20hz,
+                                    len: size_of::<Bin20hzUnion>(),
+                                    received: 0,
+                                    buffer: [0; MAX_PACKET_SIZE],
+                                };
+                            }
+                            [0xA8, 0x01] => {
+                                self.state = ParseState::ReadingPacket {
+                                    bin: VectorNavBin::Bin20hz,
+                                    len: size_of::<Bin400hzUnion>(),
+                                    received: 0,
+                                    buffer: [0; MAX_PACKET_SIZE],
+                                };
+                            }
+                            _ => {
+                                self.state = ParseState::WaitingForSync;
+                                return Err(VectorNavError::NoBinFound);
+                            }
+                        };
+                    }
+                }
+
+                // Read the packet out
+                ParseState::ReadingPacket {
+                    buffer,
+                    received,
+                    len,
+                    bin,
+                } => {
+                    buffer[*received] = byte;
+                    *received += 1;
+
+                    if *received == *len {
+                        self.check_values(bin);
+
+                        self.state = ParseState::WaitingForSync;
+                    }
+                }
+            }
         }
+
+        Err(VectorNavError::NoBinFound)
     }
 
-    pub fn check_bin(&self, buffer: [u8; 2]) -> Result<VectorNavBin, VectorNavError> {
+    pub fn check_bin(&self, buffer: &[u8]) -> Result<VectorNavBin, VectorNavError> {
         if buffer[0] == 0x42 && buffer[1] == 0x10 {
             Ok(VectorNavBin::Bin20hz)
         } else if buffer[0] == 0xA8 && buffer[1] == 0x01 {
@@ -103,11 +178,9 @@ impl VectorNav {
         }
     }
 
-    pub fn check_values(
-        &self,
-        bin: VectorNavBin,
-        crc: u16,
-    ) -> Result<VectorNavBin, VectorNavError> {
+    pub fn check_values(&self, bin: &VectorNavBin) -> Result<VectorNavBin, VectorNavError> {
+        let crc = self.calc_crc(&bin);
+
         match bin {
             VectorNavBin::Bin20hz => unsafe {
                 if self.bin1_data.data.checksum == crc {
@@ -129,7 +202,7 @@ impl VectorNav {
         }
     }
 
-    pub fn calc_crc(&self, bin: VectorNavBin) -> u16 {
+    fn calc_crc(&self, bin: &VectorNavBin) -> u16 {
         let mut crc = 0_u16;
 
         match bin {
