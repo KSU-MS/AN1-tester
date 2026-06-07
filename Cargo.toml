@@ -54,6 +54,7 @@ hx711_spi = "0.7.0"
 ksu-rs-dbc = { git = "https://github.com/KSU-MS/ksu-ms-dbc", branch = "rust", version = "0.1.0" }
 # ksu-rs-dbc = { path="../ksu-rs-dbc", version = "0.1.0" }
 embedded-can = "0.4.1"
+zerocopy = "0.8.50"
 
 
 [profile.release]
