@@ -7,6 +7,7 @@ pub enum VectorNavError {
     NoBinFound,
 }
 
+#[derive(Clone, Copy, Debug)]
 enum VectorNavBin {
     Bin20Hz,
     Bin400Hz,
@@ -160,7 +161,19 @@ impl VectorNavData {
                     len,
                     received,
                     buffer,
-                } => {}
+                } => {
+                    buffer[*received] = *byte;
+                    *received += 1;
+
+                    if *received == *len {
+                        info!("Got full bin: {:?}", bin);
+
+                        self.state = ParseState::WaitingForSync {
+                            buffer: [0_u8; 2],
+                            received: 0,
+                        };
+                    }
+                }
             }
         }
     }

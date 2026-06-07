@@ -55,6 +55,9 @@ async fn main(spawner: Spawner) {
     let driver = Driver::new(p.USB, UsbIrqs);
     spawner.spawn(logger_task(driver)).unwrap();
 
+    Timer::after_millis(4000).await;
+    info!("START");
+
     let mut uart_cfg = uart::Config::default();
     uart_cfg.baudrate = 230_400;
 
