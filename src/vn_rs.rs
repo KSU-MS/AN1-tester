@@ -1,5 +1,4 @@
 use log::info;
-use zerocopy::TryFromBytes;
 
 #[derive(Clone, Copy, Debug)]
 pub enum VectorNavError {
@@ -29,7 +28,7 @@ impl VectorNavBin {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, TryFromBytes)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Bin20Hz {
     pub time: u64, // 8
 
@@ -42,7 +41,7 @@ struct Bin20Hz {
     pub checksum: u16, // 36
 }
 
-#[derive(Clone, Copy, Debug, Default, TryFromBytes)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Bin400hz {
     pub yaw: f32,   // 4
     pub pitch: f32, // 8
@@ -98,7 +97,7 @@ impl VectorNavData {
         }
     }
 
-    pub fn update(&mut self, input: [u8; 64]) {
+    pub fn update(&mut self, input: [u8; 1]) {
         for byte in input.iter() {
             match &mut self.state {
                 ParseState::WaitingForSync { buffer, received } => {
@@ -108,6 +107,8 @@ impl VectorNavData {
                     if *received == 2 {
                         match *buffer {
                             [0xFA, 0x01] => {
+                                info!("Found sync");
+
                                 self.state = ParseState::ReadingBin {
                                     buffer: [0_u8; 2],
                                     received: 0,
@@ -131,6 +132,8 @@ impl VectorNavData {
                     if *received == 2 {
                         match *buffer {
                             [0x42, 0x10] => {
+                                info!("Got bin: 20hz");
+
                                 self.state = ParseState::ReadingPacket {
                                     bin: VectorNavBin::Bin20Hz,
                                     len: VectorNavBin::Bin20Hz.size(),
@@ -139,6 +142,8 @@ impl VectorNavData {
                                 }
                             }
                             [0xA8, 0x01] => {
+                                info!("Got bin: 400hz");
+
                                 self.state = ParseState::ReadingPacket {
                                     bin: VectorNavBin::Bin400Hz,
                                     len: VectorNavBin::Bin400Hz.size(),
@@ -147,6 +152,7 @@ impl VectorNavData {
                                 }
                             }
                             _ => {
+                                info!("Got garbo: {:?} {:?}", buffer[0], buffer[1]);
                                 self.state = ParseState::WaitingForSync {
                                     buffer: [0_u8; 2],
                                     received: 0,
@@ -192,4 +198,20 @@ impl VectorNavData {
 
         crc
     }
+
+    // fn f32_le(bytes: &[u8]) -> f32 {
+    //     f32::from_le_bytes(bytes.try_into().unwrap())
+    // }
+    //
+    // fn f64_le(bytes: &[u8]) -> f64 {
+    //     f64::from_le_bytes(bytes.try_into().unwrap())
+    // }
+    //
+    // fn u64_le(bytes: &[u8]) -> u64 {
+    //     u64::from_le_bytes(bytes.try_into().unwrap())
+    // }
+    //
+    // fn u16_le(bytes: &[u8]) -> u16 {
+    //     u16::from_le_bytes(bytes.try_into().unwrap())
+    // }
 }

@@ -33,18 +33,16 @@ async fn logger_task(driver: Driver<'static, USB>) {
 
 #[embassy_executor::task]
 async fn uart_task(mut uart: Uart<'static, Async>) {
-    let mut vn = VectorNavData::new();
+    // let mut vn = VectorNavData::new();
 
-    let mut rx_buf = [0u8; 64];
+    let mut rx_buf = [0u8; 16];
 
     loop {
         let read_res = uart.read(&mut rx_buf).await;
-        if read_res.is_err() {
-            info!("{:?}", read_res);
-            continue;
-        }
 
-        vn.update(rx_buf);
+        info!("{:?}", rx_buf)
+
+        // vn.update(rx_buf);
     }
 }
 
@@ -55,17 +53,21 @@ async fn main(spawner: Spawner) {
     let driver = Driver::new(p.USB, UsbIrqs);
     spawner.spawn(logger_task(driver)).unwrap();
 
-    Timer::after_millis(4000).await;
+    Timer::after_millis(2000).await;
     info!("START");
+    Timer::after_millis(250).await;
 
     let mut uart_cfg = uart::Config::default();
     uart_cfg.baudrate = 230_400;
 
     let uart = Uart::new(
-        p.UART1, p.PIN_24, p.PIN_25, UartIrqs, p.DMA_CH2, p.DMA_CH3, uart_cfg,
+        p.UART1, p.PIN_24, p.PIN_25, UartIrqs, p.DMA_CH0, p.DMA_CH1, uart_cfg,
     );
 
-    spawner.spawn(uart_task(uart)).unwrap();
+    info!("{:?}", spawner.spawn(uart_task(uart)));
 
-    loop {}
+    loop {
+        info!("fuck you");
+        Timer::after_millis(2000).await;
+    }
 }
