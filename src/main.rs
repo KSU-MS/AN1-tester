@@ -1,23 +1,27 @@
 #![no_std]
 #![no_main]
 
+mod messages;
+mod tasks;
+
 // use defmt::info;
 use embassy_executor::Spawner;
+use embassy_rp::adc::{self, Adc, Channel};
 use embassy_rp::bind_interrupts;
-use embassy_rp::{
-    gpio::{Level, Output},
-    i2c::{I2c},
-    peripherals::{USB, I2C0},
-    spi::{Config, Spi},
-    usb::{Driver, InterruptHandler},
-};
+use embassy_rp::gpio::{Input, Level, Output, Pull};
+use embassy_rp::i2c::{I2c};
+use embassy_rp::peripherals::{USB};
+use embassy_rp::spi::{Config, Spi};
+use embassy_rp::usb::{self, Driver};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::Delay;
 use embassy_time::Timer;
 use embassy_usb_logger;
 use hx711_spi::Hx711;
 use log::info;
 use mcp2518fd::{
-    id::{ExtendedId, Id, StandardId},
+    id::{ExtendedId, Id},
     memory::controller::{
         configuration::OperationMode,
         fifo::{FifoNumber, PayloadSize},
@@ -30,13 +34,16 @@ use mcp2518fd::{
     },
     spi::MCP2518FD,
 };
-use mlx9064x::mlx90640::Mlx90640;
-use mlx9064x::{MelexisCamera, Mlx90640Driver};
+use mlx9064x::Mlx90640Driver;
+
+use crate::tasks::tire_temp::tire_temp_task;
+use crate::tasks::wheel_speed::wheel_speed_task;
 
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
-    USBCTRL_IRQ => InterruptHandler<USB>;
+    USBCTRL_IRQ => usb::InterruptHandler<USB>;
+    ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 #[embassy_executor::task]
@@ -51,6 +58,18 @@ async fn main(_spawner: Spawner) {
     let _ = _spawner.spawn(logger_task(driver));
     Timer::after_secs(2).await;
     info!("Hello World!");
+
+    let wheel_speed = Input::new(p.PIN_29, Pull::None);
+    static SPEED: Signal<CriticalSectionRawMutex, u16> = Signal::new();
+    let _ = _spawner.spawn(wheel_speed_task(wheel_speed, &SPEED));
+
+    let mut adc = Adc::new(p.ADC, Irqs, adc::Config::default());
+    let mut shockpot = Channel::new_pin(p.PIN_26, Pull::None);
+
+    // let i2c0 = I2c::new_blocking(p.I2C0, p.PIN_25, p.PIN_24, embassy_rp::i2c::Config::default());
+    // let cam = Mlx90640Driver::new(i2c0, 0x33).unwrap();
+    // static TEMP: Signal<CriticalSectionRawMutex, f32> = Signal::new();
+    // let _ = _spawner.spawn(tire_temp_task(cam, &TEMP));
 
     let can_miso = p.PIN_0;
     let can_mosi = p.PIN_3;
@@ -108,39 +127,30 @@ async fn main(_spawner: Spawner) {
         .await
         .expect("Failed to change chip operating mode");
 
-    /* Send and receive messages forever */
-
-    // let message = TxMessage::new_2_0(
-    //     Id::Standard(StandardId::MAX),
-    //     &[1, 2, 3, 4, 5, 6, 7, 8],
-    // )
-    // .expect("Message data is too long for frame kind (FD)")
-    // .with_bit_rate_switched(true);
 
     // let spi1 = Spi::new(p.SPI1, p.PIN_14, p.PIN_27, p.PIN_28, p.DMA_CH2, p.DMA_CH3, Config::default());
     // let mut hx711 = Hx711::new(spi1);
 
     // hx711.reset_async().await.unwrap();
     // hx711.set_mode_async(hx711_spi::Mode::ChAGain64).await.unwrap();
-    
-    // let i2c0 = I2c::new_blocking(p.I2C0, p.PIN_25, p.PIN_24, embassy_rp::i2c::Config::default());
-    // let mut cam = Mlx90640Driver::new(i2c0, 0x33).unwrap();
-    
-    // let mut temperatures = [0f32; Mlx90640::HEIGHT * Mlx90640::WIDTH];
+
     // let mut counter = 0;
-    
+
     loop {
-        // let _ = cam.generate_image_if_ready(&mut temperatures);
-        
-        // let v = (hx711.read_async().await.unwrap() >> 9) + 40;
-        // info!("value = {:?}", v);
+        // let force = (hx711.read_async().await.unwrap() >> 9) + 40;
+        // let _ = can.tx_queue_transmit_message(&TxMessage::from_frame(messages::LoadCellFrame::new(force).unwrap()).unwrap()).await;
 
-        let message = TxMessage::from_frame(ksu_rs_dbc::messages::CornernodeFrShockpot::new(10).unwrap()).unwrap();
+        let shockpot_reading = adc.read(&mut shockpot).await.unwrap_or_default();
+        let _ = can.tx_queue_transmit_message(&TxMessage::from_frame(messages::ShockpotFrame::new(shockpot_reading).unwrap()).unwrap()).await;
 
+        // if temp.signaled() {
+        //     let _ = can.tx_queue_transmit_message(&TxMessage::from_frame(messages::TiretempFrame::new(temp.try_take().unwrap()).unwrap()).unwrap()).await;
+        // }
+
+        if SPEED.signaled() {
+            let _ = can.tx_queue_transmit_message(&TxMessage::from_frame(messages::WheelspeedFrame::new(SPEED.try_take().unwrap()).unwrap()).unwrap()).await;
+        }
         // Send a message with the TXQ
-        can.tx_queue_transmit_message(&message)
-            .await
-            .expect("Failed to TX frame");
 
         // Read the message back (we are in loopback mode)
         // match can.rx_fifo_get_next(FifoNumber::Fifo1).await {
@@ -149,8 +159,6 @@ async fn main(_spawner: Spawner) {
         //     Err(e) => info!("Error reading from FIFO: {:?}", e),
         // }
 
-        // counter += 1;
-        // info!("Tick {}", counter);
-        Timer::after_millis(10000).await;
+        Timer::after_millis(1).await;
     }
 }
