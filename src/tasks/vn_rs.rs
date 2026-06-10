@@ -1,3 +1,70 @@
+use embassy_rp::uart::{self, Uart};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+
+#[embassy_executor::task]
+pub async fn vectornav_task(
+    mut uart: Uart<'static, uart::Async>,
+    bin_20hz_signal: &'static Signal<CriticalSectionRawMutex, VectorNavBin20Hz>,
+    bin_400hz_signal: &'static Signal<CriticalSectionRawMutex, VectorNavBin400Hz>,
+) {
+    // Buffers to read data into
+    let mut rx_buf = [0u8; 1];
+    let mut bin_buf = [0u8; 3];
+    let mut bin_20hz = [0u8; 36];
+    let mut bin_400hz = [0u8; 50];
+
+    loop {
+        // Check the next byte
+        let read_res = uart.read(&mut rx_buf).await;
+
+        // If its our sync byte and the result was ok, read the bin
+        if rx_buf == [0xFA] && read_res.is_ok() {
+            if uart.read(&mut bin_buf).await.is_err() {
+                continue;
+            }
+
+            // Figure out which packet was sent, and try to parse it, if everything works, update
+            // the signal for the CAN fella to yeet
+            match bin_buf {
+                // 20hz bin identifier
+                [0x01, 0x42, 0x10] => {
+                    if uart.read(&mut bin_20hz).await.is_ok() {
+                        match VectorNavBin20Hz::from_bytes(&bin_buf, &bin_20hz) {
+                            Ok(bin) => {
+                                bin_20hz_signal.signal(bin);
+                            }
+
+                            Err(_) => {
+                                continue;
+                            }
+                        };
+                    };
+                }
+
+                // 400hz bin identifier
+                [0x01, 0xA8, 0x01] => {
+                    if uart.read(&mut bin_400hz).await.is_ok() {
+                        match VectorNavBin400Hz::from_bytes(&bin_buf, &bin_400hz) {
+                            Ok(bin) => {
+                                bin_400hz_signal.signal(bin);
+                            }
+
+                            Err(_) => {
+                                continue;
+                            }
+                        }
+                    };
+                }
+
+                // We got some garbo, skip
+                _ => {
+                    continue;
+                }
+            }
+        }
+    }
+}
+
 pub enum VectorNavError {
     BadCRC,
 }
@@ -22,7 +89,7 @@ impl VectorNavBin for VectorNavBin20Hz {
         // from this fucking board, I hope that you suffer a thousand byte alignment errors in hell
         let checksum = u16::from_be_bytes(bytes[34..36].try_into().unwrap());
 
-        let crc = get_crc(bin.iter().chain(bytes));
+        let crc = get_crc(bin.iter().chain(bytes[..34].iter()));
 
         if checksum == crc {
             return Ok(VectorNavBin20Hz {
@@ -53,7 +120,8 @@ impl VectorNavBin for VectorNavBin400Hz {
     fn from_bytes(bin: &[u8], bytes: &[u8]) -> Result<Self, VectorNavError> {
         let checksum = u16::from_be_bytes(bytes[48..50].try_into().unwrap());
 
-        let crc = get_crc(bin.iter().chain(bytes));
+        let crc = get_crc(bin.iter().chain(bytes[..48].iter()));
+
         if checksum == crc {
             return Ok(VectorNavBin400Hz {
                 attitude: [

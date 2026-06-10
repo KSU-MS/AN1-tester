@@ -1,11 +1,12 @@
 #![no_std]
 #![no_main]
 
-mod vn_rs;
+mod messages;
+mod tasks;
 
 use embassy_executor::Spawner;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::Delay;
+use embassy_time::{Delay, Timer};
 
 use embassy_rp::{
     bind_interrupts, gpio,
@@ -26,9 +27,13 @@ use mcp2518fd::{
     },
 };
 
-use {defmt_rtt as _, panic_probe as _};
+use crate::tasks::vn_rs::{VectorNavBin20Hz, VectorNavBin400Hz, vectornav_task};
 
-use crate::vn_rs::{VectorNavBin, VectorNavBin20Hz, VectorNavBin400Hz};
+use crate::messages::{
+    AccelFrame, AttitudeFrame, GyroFrame, PositionFrame, TimeFrame, VelocityFrame,
+};
+
+use {defmt_rtt as _, panic_probe as _};
 
 static BIN_20HZ: Signal<CriticalSectionRawMutex, VectorNavBin20Hz> = Signal::new();
 static BIN_400HZ: Signal<CriticalSectionRawMutex, VectorNavBin400Hz> = Signal::new();
@@ -53,6 +58,10 @@ async fn main(spawner: Spawner) {
     let driver = Driver::new(pins.USB, UsbIrqs);
     let _ = spawner.spawn(logger_task(driver));
 
+    Timer::after_secs(2).await;
+    info!("fuck sd");
+    Timer::after_secs(2).await;
+
     // The VectorNav is set to a weird baudrate to cram more data
     let mut uart_cfg = uart::Config::default();
     uart_cfg.baudrate = 230_400;
@@ -66,8 +75,6 @@ async fn main(spawner: Spawner) {
         pins.DMA_CH1,
         uart_cfg,
     );
-
-    let _ = spawner.spawn(uart_task(uart));
 
     let spi0 = Spi::new(
         pins.SPI0,
@@ -104,151 +111,95 @@ async fn main(spawner: Spawner) {
         .await
         .expect("Failed to change chip operating mode");
 
+    let _ = spawner.spawn(vectornav_task(uart, &BIN_20HZ, &BIN_400HZ));
+
     loop {
+        Timer::after_millis(1).await;
+
         if BIN_20HZ.signaled() {
-            let data = BIN_20HZ.try_take().unwrap();
+            info!("Trying to send 20hz");
 
-            let _ = can_controller.tx_queue_transmit_message(
-                &TxMessage::from_frame(
-                    ksu_rs_dbc::messages::EveloggerVectornavTime::new(data.unix_time_ns).unwrap(),
-                )
-                .unwrap(),
-            );
+            let data = BIN_20HZ.try_take();
 
-            let _ = can_controller.tx_queue_transmit_message(
-                &TxMessage::from_frame(
-                    ksu_rs_dbc::messages::EveloggerVectornavPosition::new(
-                        data.position[0] as f32,
-                        data.position[1] as f32,
+            if data.is_some() {
+                let data = data.unwrap();
+
+                info!("what {:?}", data.unix_time_ns);
+
+                let _ = can_controller.tx_queue_transmit_message(
+                    &TxMessage::from_frame(
+                        ksu_rs_dbc::messages::EveloggerVectornavTime::new(data.unix_time_ns)
+                            .unwrap(),
                     )
                     .unwrap(),
-                )
-                .unwrap(),
-            );
+                );
 
-            BIN_20HZ.reset();
+                // let _ = can_controller.tx_queue_transmit_message(
+                //     &TxMessage::from_frame(
+                //         ksu_rs_dbc::messages::EveloggerVectornavPosition::new(
+                //             data.position[0] as f32,
+                //             data.position[1] as f32,
+                //         )
+                //         .unwrap(),
+                //     )
+                //     .unwrap(),
+                // );
 
-            // TODO: Finish INS state signal thing
-            // let _ = can_controller.tx_queue_transmit_message(
-            //     &TxMessage::from_frame(
-            //         ksu_rs_dbc::messages::EveloggerVectornavTime::new(data.unix_time_ns).unwrap(),
-            //     )
-            //     .unwrap(),
-            // );
-        }
+                // TODO: Finish INS state signal thing
+                // let _ = can_controller.tx_queue_transmit_message(
+                //     &TxMessage::from_frame(
+                //         ksu_rs_dbc::messages::EveloggerVectornavTime::new(data.unix_time_ns).unwrap(),
+                //     )
+                //     .unwrap(),
+                // );
 
-        if BIN_400HZ.signaled() {
-            let data = BIN_400HZ.try_take().unwrap();
-
-            let _ = can_controller.tx_queue_transmit_message(
-                &TxMessage::from_frame(
-                    ksu_rs_dbc::messages::EveloggerVectornavAttitude::new(
-                        data.attitude[0],
-                        data.attitude[1],
-                        data.attitude[2],
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            );
-
-            let _ = can_controller.tx_queue_transmit_message(
-                &TxMessage::from_frame(
-                    ksu_rs_dbc::messages::EveloggerVectornavGyro::new(
-                        data.angular_rate[0],
-                        data.angular_rate[1],
-                        data.angular_rate[2],
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            );
-
-            let _ = can_controller.tx_queue_transmit_message(
-                &TxMessage::from_frame(
-                    ksu_rs_dbc::messages::EveloggerVectornavVelocity::new(
-                        data.velocity[0],
-                        data.velocity[1],
-                        data.velocity[2],
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            );
-
-            let _ = can_controller.tx_queue_transmit_message(
-                &TxMessage::from_frame(
-                    ksu_rs_dbc::messages::EveloggerVectornavAcceleration::new(
-                        data.accel[0],
-                        data.accel[1],
-                        data.accel[2],
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-            );
-
-            BIN_400HZ.reset();
-        }
-    }
-}
-
-#[embassy_executor::task]
-async fn uart_task(mut uart: Uart<'static, uart::Async>) {
-    // Buffers to read data into
-    let mut rx_buf = [0u8; 1];
-    let mut bin_buf = [0u8; 3];
-    let mut bin_20hz = [0u8; 36];
-    let mut bin_400hz = [0u8; 50];
-
-    loop {
-        // Check the next byte
-        let read_res = uart.read(&mut rx_buf).await;
-
-        // If its our sync byte and the result was ok, read the bin
-        if rx_buf == [0xFA] && read_res.is_ok() {
-            if uart.read(&mut bin_buf).await.is_err() {
-                continue;
-            }
-
-            // Figure out which packet was sent, and try to parse it, if everything works, update
-            // the signal for the CAN fella to yeet
-            match bin_buf {
-                // 20hz bin identifier
-                [0x01, 0x42, 0x10] => {
-                    if uart.read(&mut bin_20hz).await.is_ok() {
-                        match VectorNavBin20Hz::from_bytes(&bin_buf, &bin_20hz) {
-                            Ok(bin) => {
-                                BIN_20HZ.signal(bin);
-                            }
-
-                            Err(_) => {
-                                continue;
-                            }
-                        };
-                    };
-                }
-
-                // 400hz bin identifier
-                [0x01, 0xA8, 0x01] => {
-                    if uart.read(&mut bin_400hz).await.is_ok() {
-                        match VectorNavBin400Hz::from_bytes(&bin_buf, &bin_400hz) {
-                            Ok(bin) => {
-                                BIN_400HZ.signal(bin);
-                            }
-
-                            Err(_) => {
-                                continue;
-                            }
-                        }
-                    };
-                }
-
-                // We got some garbo, skip
-                _ => {
-                    continue;
-                }
+                BIN_20HZ.reset();
             }
         }
+
+        // if BIN_400HZ.signaled() {
+        //     let data = BIN_400HZ.try_take();
+        //
+        //     if data.is_some() {
+        //         let data = data.unwrap();
+        //
+        //         // let _ = can_controller.tx_queue_transmit_message(
+        //         //     &TxMessage::from_frame(
+        //         //         AttitudeFrame::new(data.attitude[0], data.attitude[1], data.attitude[2])
+        //         //             .unwrap(),
+        //         //     )
+        //         //     .unwrap(),
+        //         // );
+        //         //
+        //         // let _ = can_controller.tx_queue_transmit_message(
+        //         //     &TxMessage::from_frame(
+        //         //         GyroFrame::new(
+        //         //             data.angular_rate[0],
+        //         //             data.angular_rate[1],
+        //         //             data.angular_rate[2],
+        //         //         )
+        //         //         .unwrap(),
+        //         //     )
+        //         //     .unwrap(),
+        //         // );
+        //         //
+        //         // let _ = can_controller.tx_queue_transmit_message(
+        //         //     &TxMessage::from_frame(
+        //         //         VelocityFrame::new(data.velocity[0], data.velocity[1], data.velocity[2])
+        //         //             .unwrap(),
+        //         //     )
+        //         //     .unwrap(),
+        //         // );
+        //         //
+        //         // let _ = can_controller.tx_queue_transmit_message(
+        //         //     &TxMessage::from_frame(
+        //         //         AccelFrame::new(data.accel[0], data.accel[1], data.accel[2]).unwrap(),
+        //         //     )
+        //         //     .unwrap(),
+        //         // );
+        //     }
+        //
+        //     BIN_400HZ.reset();
+        // }
     }
 }
