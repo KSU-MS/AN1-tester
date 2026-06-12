@@ -1,24 +1,54 @@
 use embassy_rp::gpio::Input;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::Instant;
+use embassy_time::{Duration, Instant};
 
 #[embassy_executor::task]
-pub async fn wheel_speed_task(mut pin: Input<'static>, speed: &'static Signal<CriticalSectionRawMutex, u16>) {
-    const THOUSANDTH_RADIANS_PER_TOOTH: u16 = 349;
+pub async fn wheel_speed_task(
+    mut pin: Input<'static>,
+    speed: &'static Signal<CriticalSectionRawMutex, (u16, f32)>,
+) {
+    // Number of bumps on the encoder ring, 19/rotation
+    const TEETH_COUNT: u64 = 19;
+
+    // (60 s/min) * (1 * 10^6 us/s) = 60000000 us/min
+    const US_PER_MIN: u64 = 60000000;
+    const SEC_PER_US: f32 = 0.000001;
+
     pin.wait_for_rising_edge().await;
-    let mut prev = Instant::now();
+    let mut prev_us = Instant::now();
+
+    let mut prev_rpm = 0;
 
     loop {
-        pin.wait_for_rising_edge().await;
-        let dt_us = Instant::now().checked_duration_since(prev).unwrap_or_default().as_micros();
-        prev = Instant::now();
+        // Wait for new pulse, if it takes longer than 4 sec, assume RPM is 0
+        match embassy_time::with_timeout(Duration::from_secs(4), pin.wait_for_rising_edge()).await {
+            Ok(_) => {
+                // Get the change in time
+                let now = Instant::now();
+                let dt_us = (now - prev_us).as_micros();
+                prev_us = now; // Update for next cycle
 
-        if dt_us != 0 {
-            // 349 thousandths of a radian * (1_000_000/dt_us)
-            // divided by 10 since data logged is (radians/sec) * 100
-            let s = u16::try_from(u64::from(THOUSANDTH_RADIANS_PER_TOOTH) * 100_000_u64 / dt_us);
-            if s.is_ok() {
-                speed.signal(s.unwrap());
+                // (60000000 us/min) / ((now - prev_us) * (19 / rotation))
+                let rpm = u16::try_from(US_PER_MIN / (dt_us * TEETH_COUNT));
+
+                if let Ok(rpm) = rpm {
+                    let delta_rpm = (rpm as i32 - prev_rpm) as f32 / (dt_us as f32 * SEC_PER_US);
+
+                    speed.signal((rpm, delta_rpm));
+
+                    prev_rpm = rpm as i32;
+                }
+            }
+
+            Err(_) => {
+                let rpm = 0;
+
+                // We know it has been 4 seconds-ish, so delta T should just be 4
+                let delta_rpm = (rpm - prev_rpm) as f32 / 4_f32;
+
+                speed.signal((rpm as u16, delta_rpm));
+
+                prev_rpm = rpm as i32;
             }
         }
     }
