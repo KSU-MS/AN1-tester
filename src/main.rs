@@ -30,15 +30,15 @@ use mcp2518fd::{
     },
 };
 
-use crate::messages::{ShockFrame, SpeedFrame};
+use crate::messages::{ButtonFrame, RearBPFrame, SteeringFrame};
 
 use crate::tasks::generic_adc::generic_adc_task;
 use crate::tasks::wheel_speed::wheel_speed_task;
 
 use {defmt_rtt as _, panic_probe as _};
 
-static SHOCKPOT_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
-static WHEEL_SPEED: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+static REARBRAKE_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+static STEERING_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
@@ -122,10 +122,11 @@ async fn main(spawner: Spawner) {
 
     loop {
         //
-        //// The shockpot bit
-        if let Some(data) = SHOCKPOT_RAW.try_take() {
+        //// The brake pressure bit
+        if let Some(data) = REARBRAKE_RAW.try_take() {
             // V = x bit * (3.3v/2^12 bit)
 
+            // https://www.partshubdirect.com/penny-and-giles/penny-and-giles-mls130175rn-linear-displacement-sensor
             // From this point on, we assume we have the blue shockpot with 75mm stroke, the max
             // voltage should be 99.5% of vin for 0mm extended, and 0.05% of vin for 75mm extended
 
@@ -149,24 +150,6 @@ async fn main(spawner: Spawner) {
                 )
                 .await;
         }
-
-        //
-        //// The wheel speed bit
-        if let Some(data) = WHEEL_SPEED.try_take() {
-            let rpm_delta = data.1;
-            let rpm = data.0;
-
-            let _ = can
-                .tx_fifo_push_message(
-                    FifoNumber::Fifo1,
-                    &TxMessage::from_frame(SpeedFrame::new(rpm_delta, rpm).unwrap()).unwrap(),
-                )
-                .await;
-        }
-
-        //
-        //// The loadcell bit
-        // NOTE: We don't have the pushrods yet lol
 
         // Throw the messages out
         let _ = can.tx_fifo_request_transmission(FifoNumber::Fifo1).await;
