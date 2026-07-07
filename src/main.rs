@@ -55,29 +55,29 @@ async fn logger_task(driver: Driver<'static, USB>) {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     // Get the GPIOs setup and get little fellas to fuck with them
-    let pins = embassy_rp::init(Default::default());
-    let mut adc = Adc::new(pins.ADC, AdcIrqs, adc::Config::default());
+    let p = embassy_rp::init(Default::default());
+    let adc = Adc::new(p.ADC, AdcIrqs, adc::Config::default());
 
     // This gives us the ability to use the info! macro
-    let driver = Driver::new(pins.USB, Irqs);
-    let _ = spawner.spawn(logger_task(driver));
+    // let driver = Driver::new(p.USB, Irqs);
+    // let _ = spawner.spawn(logger_task(driver));
 
     // Set the spi config to 20mHz, its the max the chip can do
     let mut spi_cfg = spi::Config::default();
     spi_cfg.frequency = 20_000_000;
 
     let spi0 = Spi::new(
-        pins.SPI0,
-        pins.PIN_2,
-        pins.PIN_3,
-        pins.PIN_0,
-        pins.DMA_CH2,
-        pins.DMA_CH3,
+        p.SPI0,
+        p.PIN_2,
+        p.PIN_3,
+        p.PIN_0,
+        p.DMA_CH2,
+        p.DMA_CH3,
         spi_cfg,
     );
 
     // Start with CS HIGH bc SPI, and pass the refrence of the pin in
-    let mut can = MCP2518FD::new(spi0, gpio::Output::new(pins.PIN_1, gpio::Level::High));
+    let mut can = MCP2518FD::new(spi0, gpio::Output::new(p.PIN_1, gpio::Level::High));
 
     // Make sure the CAN controller gets reset (in case the Pico reboots
     // without the MCP2518FD losing power)
@@ -113,16 +113,15 @@ async fn main(spawner: Spawner) {
         .expect("Failed to change chip operating mode");
 
     // Set up the shockpot reading task
-    let shock_pot_adc_channel = Channel::new_pin(pins.PIN_26, Pull::None);
+    let shock_pot_adc_channel = Channel::new_pin(p.PIN_26, Pull::None);
     let _ = spawner.spawn(generic_adc_task(adc, shock_pot_adc_channel, &SHOCKPOT_RAW));
 
     // Set up the wheelspeed reading task
-    let wheel_speed_pin = Input::new(pins.PIN_29, Pull::Down);
+    let wheel_speed_pin = Input::new(p.PIN_29, Pull::None);
     let _ = spawner.spawn(wheel_speed_task(wheel_speed_pin, &WHEEL_SPEED));
 
     loop {
-        //
-        //// The shockpot bit
+        //// * The shockpot bit
         if let Some(data) = SHOCKPOT_RAW.try_take() {
             // V = x bit * (3.3v/2^12 bit)
 
@@ -150,8 +149,7 @@ async fn main(spawner: Spawner) {
                 .await;
         }
 
-        //
-        //// The wheel speed bit
+        //// * The wheel speed bit
         if let Some(data) = WHEEL_SPEED.try_take() {
             let rpm_delta = data.1;
             let rpm = data.0;
@@ -164,8 +162,7 @@ async fn main(spawner: Spawner) {
                 .await;
         }
 
-        //
-        //// The loadcell bit
+        //// * The loadcell bit
         // NOTE: We don't have the pushrods yet lol
 
         // Throw the messages out
