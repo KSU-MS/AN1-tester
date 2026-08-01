@@ -7,8 +7,8 @@ pub async fn wheel_speed_task(
     mut pin: Input<'static>,
     speed: &'static Signal<CriticalSectionRawMutex, (u16, f32)>,
 ) {
-    // Number of bumps on the encoder ring, 19/rotation
-    const TEETH_COUNT: u64 = 19;
+    // Number of bumps on the encoder ring, 18/rotation
+    const TEETH_COUNT: u64 = 18;
 
     // (60 s/min) * (1 * 10^6 us/s) = 60000000 us/min
     const US_PER_MIN: u64 = 60000000;
