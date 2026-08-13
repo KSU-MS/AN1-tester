@@ -30,15 +30,17 @@ use mcp2518fd::{
     },
 };
 
-use crate::messages::{ShockFrame, SpeedFrame};
+use crate::messages::*;
 
 use crate::tasks::generic_adc::generic_adc_task;
 use crate::tasks::wheel_speed::wheel_speed_task;
 
-use {defmt_rtt as _, panic_probe as _};
+use {defmt_rtt as _, panic_reset as _};
 
-static SHOCKPOT_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
-static WHEEL_SPEED: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+static SHOCKPOT_R_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+static SHOCKPOT_L_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+static WHEEL_R_SPEED: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+static WHEEL_L_SPEED: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
@@ -113,16 +115,15 @@ async fn main(spawner: Spawner) {
         .expect("Failed to change chip operating mode");
 
     // Set up the shockpot reading task
-    let shock_pot_adc_channel = Channel::new_pin(p.PIN_26, Pull::None);
-    let _ = spawner.spawn(generic_adc_task(adc, shock_pot_adc_channel, &SHOCKPOT_RAW));
+    let _ = spawner.spawn(generic_adc_task(adc, Channel::new_pin(p.PIN_29, Pull::None), Channel::new_pin(p.PIN_28, Pull::None), [&SHOCKPOT_L_RAW, &SHOCKPOT_R_RAW]));
 
     // Set up the wheelspeed reading task
-    let wheel_speed_pin = Input::new(p.PIN_29, Pull::None);
-    let _ = spawner.spawn(wheel_speed_task(wheel_speed_pin, &WHEEL_SPEED));
+    let _ = spawner.spawn(wheel_speed_task(Input::new(p.PIN_26, Pull::None), &WHEEL_L_SPEED));
+    let _ = spawner.spawn(wheel_speed_task(Input::new(p.PIN_27, Pull::None), &WHEEL_R_SPEED));
 
     loop {
         //// * The shockpot bit
-        if let Some(data) = SHOCKPOT_RAW.try_take() {
+        if let Some(data) = SHOCKPOT_L_RAW.try_take() {
             // V = x bit * (3.3v/2^12 bit)
 
             // From this point on, we assume we have the blue shockpot with 75mm stroke, the max
@@ -138,28 +139,62 @@ async fn main(spawner: Spawner) {
 
             let an1_uint12 = data.0;
 
-            let _ = can
-                .tx_fifo_push_message(
-                    FifoNumber::Fifo1,
-                    &TxMessage::from_frame(
-                        ShockFrame::new(length_delta, length_mm, an1_uint12).unwrap(),
+            if let Ok(msg) = ShockFrameL::new(length_delta, length_mm, an1_uint12) {
+                let _ = can
+                    .tx_fifo_push_message(
+                        FifoNumber::Fifo1,
+                        &TxMessage::from_frame(msg)
+                        .unwrap(),
                     )
-                    .unwrap(),
-                )
-                .await;
+                    .await;
+            }
+
+        }
+        if let Some(data) = SHOCKPOT_R_RAW.try_take() {
+            // SEE PREV
+            let length_mm = (4076 - data.0) as f32 * 0.018495501894_f32;
+            let length_delta = (4076_f32 - data.1) * 0.018495501894_f32;
+            let an1_uint12 = data.0;
+
+
+            if let Ok(msg) = ShockFrameR::new(length_delta, length_mm, an1_uint12) {
+                let _ = can
+                    .tx_fifo_push_message(
+                        FifoNumber::Fifo1,
+                        &TxMessage::from_frame(msg)
+                        .unwrap(),
+                    )
+                    .await;
+            }
         }
 
         //// * The wheel speed bit
-        if let Some(data) = WHEEL_SPEED.try_take() {
+        if let Some(data) = WHEEL_L_SPEED.try_take() {
             let rpm_delta = data.1;
             let rpm = data.0;
 
-            let _ = can
-                .tx_fifo_push_message(
-                    FifoNumber::Fifo1,
-                    &TxMessage::from_frame(SpeedFrame::new(rpm_delta, rpm).unwrap()).unwrap(),
-                )
-                .await;
+            if let Ok(msg) = SpeedFrameL::new(rpm_delta, rpm) {
+                let _ = can
+                    .tx_fifo_push_message(
+                        FifoNumber::Fifo1,
+                        &TxMessage::from_frame(msg).unwrap(),
+                    )
+                    .await;
+            }
+        }
+        if let Some(data) = WHEEL_R_SPEED.try_take() {
+            let rpm_delta = data.1;
+            let rpm = data.0;
+
+            if let Ok(msg) = SpeedFrameR::new(rpm_delta, rpm) {
+                let _ = can
+                    .tx_fifo_push_message(
+                        FifoNumber::Fifo1,
+                        &TxMessage::from_frame(msg).unwrap(),
+                    )
+                    .await;
+            }
+
         }
 
         //// * The loadcell bit

@@ -5,8 +5,9 @@ use embassy_time::{Instant, Timer};
 #[embassy_executor::task]
 pub async fn generic_adc_task(
     mut adc_fella: Adc<'static, Async>,
-    mut pin: Channel<'static>,
-    reading: &'static Signal<CriticalSectionRawMutex, (u16, f32)>,
+    mut pin1: Channel<'static>,
+    mut pin2: Channel<'static>,
+    reading: [&'static Signal<CriticalSectionRawMutex, (u16, f32)>; 2],
 ) {
     //
     //// Filter things
@@ -24,24 +25,26 @@ pub async fn generic_adc_task(
     //// Delta things
     const SEC_PER_US: f32 = 0.000001;
 
-    let mut prev_us = Instant::now();
-    let mut prev_sample = 0_f32;
+    let mut prev_us = [Instant::now(), Instant::now()];
+    let mut prev_sample = [0_f32, 0_f32];
 
     loop {
-        if let Ok(data) = adc_fella.read(&mut pin).await {
-            // Get the change in time
-            let now = Instant::now();
-            let dt_us = (now - prev_us).as_micros();
-            prev_us = now; // Update for next cycle
+        for (i, pin) in [&mut pin1, &mut pin2].iter_mut().enumerate() {
+            if let Ok(data) = adc_fella.read(pin).await {
+                // Get the change in time
+                let now = Instant::now();
+                let dt_us = (now - prev_us[i]).as_micros();
+                prev_us[i] = now; // Update for next cycle
 
-            // 1-pole low-pass
-            filtered += alpha * (data as f32 - filtered);
+                // 1-pole low-pass
+                filtered += alpha * (data as f32 - filtered);
 
-            // Update the delta
-            let delta_filter = (filtered - prev_sample) / (dt_us as f32 * SEC_PER_US);
-            prev_sample = filtered;
+                // Update the delta
+                let delta_filter = (filtered - prev_sample[i]) / (dt_us as f32 * SEC_PER_US);
+                prev_sample[i] = filtered;
 
-            reading.signal((filtered as u16, delta_filter));
+                reading[i].signal((filtered as u16, delta_filter));
+            }
         }
 
         Timer::after_micros(400).await;

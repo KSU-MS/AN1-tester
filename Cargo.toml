@@ -54,6 +54,7 @@ ksu-rs-dbc = { git = "https://github.com/KSU-MS/ksu-ms-dbc", branch = "rust", ve
 embedded-can = "0.4.1"
 zerocopy = "0.8.50"
 embassy-futures = "0.1.2"
+panic-reset = "0.1.1"
 
 
 [profile.release]
