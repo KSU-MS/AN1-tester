@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use embassy_rp::uart::{self, Uart};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 

@@ -46,7 +46,7 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
 });
 bind_interrupts!(struct AdcIrqs {
-        ADC_IRQ_FIFO => adc::InterruptHandler;
+    ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 #[embassy_executor::task]
@@ -78,7 +78,7 @@ async fn main(spawner: Spawner) {
         spi_cfg,
     );
 
-    // Start with CS HIGH bc SPI, and pass the refrence of the pin in
+    // Start with CS HIGH bc SPI, and pass the reference of the pin in
     let mut can = MCP2518FD::new(spi0, gpio::Output::new(p.PIN_1, gpio::Level::High));
 
     // Make sure the CAN controller gets reset (in case the Pico reboots
@@ -115,11 +115,11 @@ async fn main(spawner: Spawner) {
         .expect("Failed to change chip operating mode");
 
     // Set up the shockpot reading task
-    let _ = spawner.spawn(generic_adc_task(adc, Channel::new_pin(p.PIN_29, Pull::None), Channel::new_pin(p.PIN_28, Pull::None), [&SHOCKPOT_L_RAW, &SHOCKPOT_R_RAW]));
+    let _ = spawner.spawn(generic_adc_task(adc, [Channel::new_pin(p.PIN_29, Pull::None), Channel::new_pin(p.PIN_28, Pull::None)], [&SHOCKPOT_L_RAW, &SHOCKPOT_R_RAW]));
 
     // Set up the wheelspeed reading task
-    let _ = spawner.spawn(wheel_speed_task(Input::new(p.PIN_26, Pull::None), &WHEEL_L_SPEED));
-    let _ = spawner.spawn(wheel_speed_task(Input::new(p.PIN_27, Pull::None), &WHEEL_R_SPEED));
+    let _ = spawner.spawn(wheel_speed_task(Input::new(p.PIN_25, Pull::None), &WHEEL_L_SPEED));
+    let _ = spawner.spawn(wheel_speed_task(Input::new(p.PIN_24, Pull::None), &WHEEL_R_SPEED));
 
     loop {
         //// * The shockpot bit
@@ -133,11 +133,10 @@ async fn main(spawner: Spawner) {
 
             // This can be baked into the following
             // (4076 - x) * 0.018495501894
-            let length_mm = (4076 - data.0) as f32 * 0.018495501894_f32;
+            let length_mm = (4096 - data.0) as f32 * 0.018495501894_f32;
+            let length_delta = data.1 * 0.018495501894_f32;
 
-            let length_delta = (4076_f32 - data.1) * 0.018495501894_f32;
-
-            let an1_uint12 = data.0;
+            let an1_uint12 = data.0.clamp(0, 65535_u16);
 
             if let Ok(msg) = ShockFrameL::new(length_delta, length_mm, an1_uint12) {
                 let _ = can
@@ -153,9 +152,8 @@ async fn main(spawner: Spawner) {
         if let Some(data) = SHOCKPOT_R_RAW.try_take() {
             // SEE PREV
             let length_mm = (4076 - data.0) as f32 * 0.018495501894_f32;
-            let length_delta = (4076_f32 - data.1) * 0.018495501894_f32;
-            let an1_uint12 = data.0;
-
+            let length_delta = data.1 * 0.018495501894_f32;
+            let an1_uint12 = data.0.clamp(0, 65535_u16);
 
             if let Ok(msg) = ShockFrameR::new(length_delta, length_mm, an1_uint12) {
                 let _ = can
@@ -171,7 +169,7 @@ async fn main(spawner: Spawner) {
         //// * The wheel speed bit
         if let Some(data) = WHEEL_L_SPEED.try_take() {
             let rpm_delta = data.1;
-            let rpm = data.0;
+            let rpm = data.0.clamp(0, 65535_u16);
 
             if let Ok(msg) = SpeedFrameL::new(rpm_delta, rpm) {
                 let _ = can
@@ -184,7 +182,7 @@ async fn main(spawner: Spawner) {
         }
         if let Some(data) = WHEEL_R_SPEED.try_take() {
             let rpm_delta = data.1;
-            let rpm = data.0;
+            let rpm = data.0.clamp(0, 65535_u16);
 
             if let Ok(msg) = SpeedFrameR::new(rpm_delta, rpm) {
                 let _ = can
