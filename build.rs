@@ -32,4 +32,9 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+
+    #[cfg(not(any(feature = "rear_unified", feature = "front_left", feature = "front_right")))]
+    compile_error!("no compile feature specified.\nMake sure to use 'cargo run --release --features front_left', with 'front_left', 'front_right', or 'rear_unified'");
+    #[cfg(all(feature = "rear_unified", feature = "front_left", feature = "front_right"))]
+    compile_error!("why are all features enabled???");
 }

@@ -38,6 +38,15 @@ There are several changes that may need to be made. Change these for your curren
 
 in `main.rs`, the primary logging system can either be `defmt` or `log`. `defmt` is logging over debug probes, while `log` is for using `embassy-usb-logger`. USB logging can also be disabled by commenting out lines 62 and 63 of `main.rs`
 
+.vscode/settings.json: vscode config
+```json
+{
+    "rust-analyzer.cargo.target": "thumbv8m.main-none-eabihf",
+    "rust-analyzer.cargo.features": ["front_left"], // <-- this is required for vscode intellisense
+    "rust-analyzer.cargo.allTargets": false
+}
+```
+
 ---
 ### Deploying code
 
@@ -51,7 +60,9 @@ in `main.rs`, the primary logging system can either be `defmt` or `log`. `defmt`
 
 4. open an1-tester in your terminal
 
-5. Use the following command to upload the program:
+5. Use the following commands to upload the program to the different boards:
 ```sh
-cargo run --release
+cargo run --release --features front_left
+cargo run --release --features front_right
+cargo run --release --features rear_unified
 ```

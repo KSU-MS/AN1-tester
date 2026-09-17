@@ -5,11 +5,10 @@ version = "0.2.0"
 license = "MIT OR Apache-2.0"
 
 [features]
-default = ["front_left"]
 front_left = []
 front_right = []
-rear_left = []
-rear_right = []
+# rear_left = []
+# rear_right = []
 rear_unified = []
 
 [dependencies]
