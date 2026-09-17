@@ -1,8 +1,16 @@
 [package]
 edition = "2024"
 name = "an1-tester"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT OR Apache-2.0"
+
+[features]
+default = ["front_left"]
+front_left = []
+front_right = []
+rear_left = []
+rear_right = []
+rear_unified = []
 
 [dependencies]
 cortex-m = { version = "0.7", features = ["inline-asm"] }
