@@ -17,6 +17,8 @@ use embassy_rp::{
     usb::{self, Driver},
 };
 
+#[cfg(debug_assertions)]
+use log::info;
 use mcp2518fd::{
     self, MCP2518FD,
     memory::controller::{
@@ -52,8 +54,6 @@ cfg_select! {
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
-});
-bind_interrupts!(struct AdcIrqs {
     ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
@@ -66,11 +66,18 @@ async fn logger_task(driver: Driver<'static, USB>) {
 async fn main(spawner: Spawner) {
     // Get the GPIOs setup and get little fellas to fuck with them
     let p = embassy_rp::init(Default::default());
-    let adc = Adc::new(p.ADC, AdcIrqs, adc::Config::default());
+    let adc = Adc::new(p.ADC, Irqs, adc::Config::default());
 
-    // This gives us the ability to use the info! macro
-    // let driver = Driver::new(p.USB, Irqs);
-    // let _ = spawner.spawn(logger_task(driver));
+    #[cfg(debug_assertions)]
+    {
+        // This gives us the ability to use the info! macro
+
+        let driver = Driver::new(p.USB, Irqs);
+        let _ = spawner.spawn(logger_task(driver));
+    
+        Timer::after_millis(2000).await;
+        info!("Hello World");
+    }
 
     // Set the spi config to 20mHz, its the max the chip can do
     let mut spi_cfg = spi::Config::default();

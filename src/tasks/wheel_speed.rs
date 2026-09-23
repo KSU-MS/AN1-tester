@@ -2,7 +2,7 @@ use embassy_rp::gpio::Input;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, TimeoutError};
 
-#[embassy_executor::task]
+#[embassy_executor::task(pool_size = 2)]
 pub async fn wheel_speed_task(
     mut pin: Input<'static>,
     speed: &'static Signal<CriticalSectionRawMutex, (u16, f32)>,
