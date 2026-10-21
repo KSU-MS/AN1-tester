@@ -14,11 +14,13 @@ pub async fn generic_adc_task(
     reading: [&'static Signal<CriticalSectionRawMutex, (u16, f32)>; N],
 ) {
     let mut ticker = Ticker::every(Duration::from_hz(2_500));
+    let mut prev_data = [0_u16; N];
+
     loop {
-        // let vals = [0_u16; 5];
         for i in 0..N {
             if let Ok(data) = adc.read(&mut channels[i]).await {
-                reading[i].signal((data.clamp(0, 65535_u16), 0_f32));
+                reading[i].signal((data.clamp(0, 65535_u16), data as f32 - prev_data[i] as f32));
+                prev_data[i] = data;
             }
         }
 
