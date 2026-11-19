@@ -45,8 +45,8 @@ cfg_select! {
         static WHEEL_SPEED: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
     }
     feature = "rear_unified" => {
-        static SHOCKPOT_R_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
-        static SHOCKPOT_L_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+        // static SHOCKPOT_R_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
+        // static SHOCKPOT_L_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
         static WHEEL_R_SPEED: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
         static WHEEL_L_SPEED: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
     }
@@ -74,7 +74,7 @@ async fn main(spawner: Spawner) {
 
         let driver = Driver::new(p.USB, Irqs);
         let _ = spawner.spawn(logger_task(driver));
-    
+
         Timer::after_millis(2000).await;
         info!("Hello World");
     }
@@ -124,7 +124,8 @@ async fn main(spawner: Spawner) {
         .expect("Failed to change chip operating mode");
 
     // Set up the shockpot reading task
-    #[cfg(feature = "rear_unified")]
+    // #[cfg(feature = "rear_unified")]
+    #[cfg(false)]
     let _ = spawner.spawn(generic_adc_task(
         adc,
         [
@@ -167,7 +168,8 @@ async fn main(spawner: Spawner) {
             let _ = can.tx_fifo_transmit_message(FifoNumber::Fifo1, &msg).await;
         }
 
-        #[cfg(feature = "rear_unified")]
+        // #[cfg(feature = "rear_unified")]
+        #[cfg(false)]
         {
             if let Some(msg) = shock(&SHOCKPOT_L_RAW, |d: f32, l: f32, r: u16| {
                 TxMessage::from_frame(ShockFrameL::new(d, l, r).ok()?)
