@@ -43,12 +43,11 @@ use {defmt_rtt as _, panic_probe as _};
 static REARBRAKE_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
 static STEERING_RAW: Signal<CriticalSectionRawMutex, (u16, f32)> = Signal::new();
 static RTD_BUTTON: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static TRACTION_BUTTON: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
-});
-bind_interrupts!(struct AdcIrqs {
-        ADC_IRQ_FIFO => adc::InterruptHandler;
+    ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 #[embassy_executor::task]
@@ -60,7 +59,7 @@ async fn logger_task(driver: Driver<'static, USB>) {
 async fn main(spawner: Spawner) {
     // Get the GPIOs setup and get little fellas to fuck with them
     let pins = embassy_rp::init(Default::default());
-    let adc = Adc::new(pins.ADC, AdcIrqs, adc::Config::default());
+    let adc = Adc::new(pins.ADC, Irqs, adc::Config::default());
 
     // This gives us the ability to use the info! macro
     let driver = Driver::new(pins.USB, Irqs);
@@ -131,6 +130,13 @@ async fn main(spawner: Spawner) {
         tasks::generic_button::Config::default(),
     ));
 
+    let traction_control_button_pin = Input::new(pins.PIN_24, Pull::Up);
+    let _ = spawner.spawn(generic_button_task(
+        traction_control_button_pin,
+        &TRACTION_BUTTON,
+        tasks::generic_button::Config::default(),
+    ));
+
     loop {
         //
         //// The brake pressure bit
@@ -179,16 +185,16 @@ async fn main(spawner: Spawner) {
         //     // TODO: Later /-\
         // }
 
-        if let Some(data) = RTD_BUTTON.try_take() {
-            let _ = can
-                .tx_fifo_push_message(
-                    FifoNumber::Fifo1,
-                    &TxMessage::from_frame(
-                        ButtonFrame::new(false, data, false, false, false, false).unwrap(),
-                    )
-                    .unwrap(),
-                )
-                .await;
+        if let Some(msg) = btn(&RTD_BUTTON, |d: bool| {
+            TxMessage::from_frame(ButtonFrame::new(false, d, false, false, false, false).ok()?)
+        }) {
+            let _ = can.tx_fifo_transmit_message(FifoNumber::Fifo1, &msg).await;
+        }
+
+        if let Some(msg) = btn(&TRACTION_BUTTON, |d: bool| {
+            TxMessage::from_frame(ButtonFrame::new(false, false, false, false, false, d).ok()?)
+        }) {
+            let _ = can.tx_fifo_transmit_message(FifoNumber::Fifo1, &msg).await;
         }
 
         // Throw the messages out onto the bus
@@ -197,4 +203,13 @@ async fn main(spawner: Spawner) {
         // 50 hz lol
         Timer::after_millis(20).await;
     }
+}
+
+fn btn(
+    sig: &Signal<CriticalSectionRawMutex, bool>,
+    new: fn(bool) -> Option<TxMessage>,
+) -> Option<TxMessage> {
+    let data = sig.try_take()?;
+
+    return new(data);
 }

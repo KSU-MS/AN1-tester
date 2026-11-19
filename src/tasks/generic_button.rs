@@ -16,7 +16,7 @@ impl Default for Config {
     }
 }
 
-#[embassy_executor::task]
+#[embassy_executor::task(pool_size = 2)]
 pub async fn generic_button_task(
     mut pin: Input<'static>,
     reading: &'static Signal<CriticalSectionRawMutex, bool>,
